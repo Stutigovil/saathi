@@ -118,21 +118,37 @@ const parseSummaryResponse = (rawText, fallback) => {
   return fallback;
 };
 
-const buildConversationMessages = (transcript, memoryContext, elderName) => {
+const buildConversationMessages = ({
+  transcript,
+  memoryContext,
+  elderName,
+  elderProfile,
+  baseSystemPrompt,
+  dynamicPromptState
+}) => {
   const formattedMemoryContext = getMemoryContextPrompt(
     Array.isArray(memoryContext)
       ? memoryContext
       : [String(memoryContext || 'No memory context available yet.')]
   );
 
-  const elderProfile = {
+  const fallbackElderProfile = {
     name: elderName,
     age: 'Unknown',
     city: 'Unknown',
     language: 'Hindi'
   };
 
-  const systemPrompt = getSathiSystemPrompt(elderProfile, formattedMemoryContext);
+  const effectiveElderProfile = {
+    ...fallbackElderProfile,
+    ...(elderProfile || {})
+  };
+
+  const systemPrompt =
+    String(dynamicPromptState || '').trim() ||
+    String(baseSystemPrompt || '').trim() ||
+    getSathiSystemPrompt(effectiveElderProfile, formattedMemoryContext);
+
   const userPrompt = getConversationExtractionPrompt(transcript, formattedMemoryContext, elderName);
 
   return [
@@ -275,8 +291,22 @@ const generateText = async ({ prompt, messages }) => {
   throw lastError || new Error('Groq request failed');
 };
 
-const getConversationResponse = async (transcript, memoryContext, elderName) => {
-  const messages = buildConversationMessages(transcript, memoryContext, elderName);
+const getConversationResponse = async ({
+  transcript,
+  memoryContext,
+  elderName,
+  elderProfile,
+  baseSystemPrompt,
+  dynamicPromptState
+}) => {
+  const messages = buildConversationMessages({
+    transcript,
+    memoryContext,
+    elderName,
+    elderProfile,
+    baseSystemPrompt,
+    dynamicPromptState
+  });
   const raw = await generateText({ messages });
 
   const fallback = {
@@ -287,7 +317,8 @@ const getConversationResponse = async (transcript, memoryContext, elderName) => 
     memory_worthy: true,
     follow_up_for_next_call: [],
     end_call: false,
-    alert_family: false
+    alert_family: false,
+    dynamic_prompt_state: String(dynamicPromptState || baseSystemPrompt || '').trim()
   };
 
   return parseConversationResponse(raw, fallback);

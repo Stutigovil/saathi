@@ -8,6 +8,11 @@ const { summarizeCall, getConversationResponse } = require('../services/gemini.s
 const { saveMemory, getMemoryContext } = require('../services/memory.service');
 const { evaluateDistress, sendDistressAlert } = require('../services/distress.service');
 const { synthesizeSpeech } = require('../services/elevenlabs.service');
+const {
+  ensureBasePrompt,
+  getEffectiveSystemPrompt,
+  sanitizeDynamicPromptState
+} = require('../services/prompt-manager');
 
 const router = express.Router();
 const { twiml: TwiML } = twilio;
@@ -95,6 +100,7 @@ router.post('/twilio/voice', async (req, res) => {
     const introText = getHindiIntroText(elder?.name);
     const publicBase = getPublicBaseUrl();
     const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
+    console.info(`TTS mode: ${useElevenLabs ? 'elevenlabs' : 'twilio'} (publicBase=${publicBase ? 'set' : 'missing'})`);
     const vr = new TwiML.VoiceResponse();
 
     const gather = vr.gather({
@@ -106,10 +112,11 @@ router.post('/twilio/voice', async (req, res) => {
     });
 
     if (useElevenLabs) {
-      const introToken = await cacheTtsAudio(introText, elder?.voice_id);
+      const introToken = await cacheTtsAudio(introText);
       if (introToken) {
         gather.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(introToken)}`);
       } else {
+        console.warn('ElevenLabs intro TTS unavailable, falling back to Twilio say.');
         gather.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, introText);
       }
     } else {
@@ -153,7 +160,7 @@ router.get('/twilio/tts', async (req, res) => {
       text = getHindiClosingText();
     }
 
-    const tts = await synthesizeSpeech(text, elder?.voice_id || process.env.ELEVENLABS_VOICE_ID);
+    const tts = await synthesizeSpeech(text);
 
     if (!tts?.audioBuffer) {
       return res.status(404).send('TTS unavailable');
@@ -209,7 +216,22 @@ router.post('/twilio/gather', async (req, res) => {
       const aiResult = await Promise.race([
         (async () => {
           const memoryContext = elderId ? await getMemoryContext(elderId) : 'No prior memory found.';
-          return getConversationResponse(speech, memoryContext, elder?.name || 'Elder');
+          const baseSystemPrompt = ensureBasePrompt({ call, elder, memoryContext });
+          const effectiveSystemPrompt = getEffectiveSystemPrompt({
+            basePrompt: baseSystemPrompt,
+            dynamicPromptState: call?.dynamic_prompt_state
+          });
+
+          const transcriptForAI = call?.transcript || speech;
+
+          return getConversationResponse({
+            transcript: transcriptForAI,
+            memoryContext,
+            elderName: elder?.name || 'Elder',
+            elderProfile: elder,
+            baseSystemPrompt: effectiveSystemPrompt,
+            dynamicPromptState: call?.dynamic_prompt_state || ''
+          });
         })(),
         sleep(effectiveAiTimeoutMs).then(() => null)
       ]);
@@ -219,6 +241,10 @@ router.post('/twilio/gather', async (req, res) => {
       }
 
       responseText = String(aiResult?.response_text || responseText).trim();
+
+      if (call && aiResult?.dynamic_prompt_state) {
+        call.dynamic_prompt_state = sanitizeDynamicPromptState(aiResult.dynamic_prompt_state);
+      }
 
       if (aiResult?.end_call === true) {
         responseText = `${responseText} ${getHindiClosingText()}`;
@@ -242,19 +268,21 @@ router.post('/twilio/gather', async (req, res) => {
     if (shouldEndCall) {
       if (useElevenLabs) {
         const [responseToken, closingToken] = await Promise.all([
-          cacheTtsAudio(safeResponseText, elder?.voice_id),
-          cacheTtsAudio(getHindiClosingText(), elder?.voice_id)
+          cacheTtsAudio(safeResponseText),
+          cacheTtsAudio(getHindiClosingText())
         ]);
 
         if (responseToken) {
           vr.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(responseToken)}`);
         } else {
+          console.warn('ElevenLabs response TTS unavailable, falling back to Twilio say.');
           vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, safeResponseText);
         }
 
         if (closingToken) {
           vr.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(closingToken)}`);
         } else {
+          console.warn('ElevenLabs closing TTS unavailable, falling back to Twilio say.');
           vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, getHindiClosingText());
         }
       } else {

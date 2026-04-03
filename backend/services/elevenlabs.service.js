@@ -6,8 +6,12 @@ let elevenlabsBlockedUntil = 0;
 const isBlocked = () => Date.now() < elevenlabsBlockedUntil;
 const isEnabled = () => process.env.ELEVENLABS_ENABLED === 'true';
 
-const synthesizeSpeech = async (text, voiceId = process.env.ELEVENLABS_VOICE_ID) => {
+const synthesizeSpeech = async (
+  text,
+  voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
+) => {
   if (!isEnabled()) {
+    console.warn('ElevenLabs disabled via ELEVENLABS_ENABLED.');
     return {
       audioUrl: null,
       demo_mode: true,
@@ -16,6 +20,7 @@ const synthesizeSpeech = async (text, voiceId = process.env.ELEVENLABS_VOICE_ID)
   }
 
   if (isBlocked()) {
+    console.warn('ElevenLabs temporarily blocked, using fallback voice.');
     return {
       audioUrl: null,
       demo_mode: true,
@@ -24,6 +29,7 @@ const synthesizeSpeech = async (text, voiceId = process.env.ELEVENLABS_VOICE_ID)
   }
 
   if (!process.env.ELEVENLABS_API_KEY) {
+    console.warn('ElevenLabs API key missing, using fallback voice.');
     return {
       audioUrl: null,
       demo_mode: true,
@@ -38,10 +44,8 @@ const synthesizeSpeech = async (text, voiceId = process.env.ELEVENLABS_VOICE_ID)
         text,
         model_id: 'eleven_multilingual_v2',
         voice_settings: {
-          stability: 0.65,
-          similarity_boost: 0.8,
-          style: 0.2,
-          use_speaker_boost: true
+          stability: 0.4,
+          similarity_boost: 0.8
         }
       },
       {
@@ -53,6 +57,8 @@ const synthesizeSpeech = async (text, voiceId = process.env.ELEVENLABS_VOICE_ID)
         timeout: 20000
       }
     );
+
+    console.info(`ElevenLabs TTS generated (${response?.data?.byteLength || 0} bytes).`);
 
     return {
       audioBuffer: Buffer.from(response.data),
