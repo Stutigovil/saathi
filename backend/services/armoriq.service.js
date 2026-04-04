@@ -2,15 +2,39 @@ const ArmorIQBlock = require('../models/ArmorIQBlock');
 
 const ARMORIQ_RULES = {
   NO_MEDICAL_ADVICE: {
-    apply_on: 'assistant',
-    trigger_patterns: ['dawai', 'medicine', 'pain killer', 'dose', 'ilaaj', 'treatment'],
+    apply_on: 'both',
+    trigger_patterns: [
+      'dawai',
+      'davai',
+      'medicine',
+      'pain killer',
+      'dose',
+      'ilaaj',
+      'treatment',
+      'दवाई',
+      'दवा',
+      'इलाज',
+      'मेडिसिन',
+      'गोली'
+    ],
     action: 'REDIRECT',
     severity: 'medium',
     redirect_response: 'Yeh doctor ji better bata paayenge. Aap unse zarur milna. Abhi kaisa lag raha hai?'
   },
   NO_PII_LEAKAGE: {
-    apply_on: 'assistant',
-    trigger_patterns: ['otp', 'aadhaar', 'bank number', 'pin', 'account details'],
+    apply_on: 'both',
+    trigger_patterns: [
+      'otp',
+      'aadhaar',
+      'bank number',
+      'pin',
+      'account details',
+      'ओटीपी',
+      'आधार',
+      'बैंक',
+      'पिन',
+      'खाता नंबर'
+    ],
     action: 'BLOCK',
     severity: 'high',
     redirect_response: 'Main personal ya sensitive jaankari share nahi kar sakti. Chaliye aapke din ke baare mein baat karte hain.'
@@ -41,8 +65,20 @@ const ARMORIQ_RULES = {
     redirect_response: 'Main aapke saath hoon. Aap akelay nahi hain. Main turant aapke parivaar ko gently inform karti hoon taaki woh aapse baat kar sakein.'
   },
   NO_FINANCIAL_ADVICE: {
-    apply_on: 'assistant',
-    trigger_patterns: ['investment', 'shares', 'loan', 'mutual fund', 'stock', 'paise kaha lagau'],
+    apply_on: 'both',
+    trigger_patterns: [
+      'investment',
+      'shares',
+      'loan',
+      'mutual fund',
+      'stock',
+      'paise kaha lagau',
+      'निवेश',
+      'लोन',
+      'शेयर',
+      'स्टॉक',
+      'पैसे कहाँ लगाऊ'
+    ],
     action: 'REDIRECT',
     severity: 'medium',
     redirect_response: 'Paise ke faisle ke liye trusted financial advisor se baat karna behtar rahega. Aaj aapka din kaisa raha?'
@@ -68,8 +104,28 @@ const checkResponse = async (responseText, elder, userText = '') => {
 
   for (const [ruleId, rule] of Object.entries(ARMORIQ_RULES)) {
     const applyOn = rule.apply_on || 'assistant';
-    const targetText = applyOn === 'user' ? userInput : assistantText;
-    const matchedPattern = rule.trigger_patterns.find((pattern) => textContainsPattern(targetText, pattern));
+    const targetTexts =
+      applyOn === 'user'
+        ? [{ text: userInput, matchedOn: 'user' }]
+        : applyOn === 'both'
+          ? [
+              { text: userInput, matchedOn: 'user' },
+              { text: assistantText, matchedOn: 'assistant' }
+            ]
+          : [{ text: assistantText, matchedOn: 'assistant' }];
+
+    let matchedPattern = null;
+    let matchedOn = null;
+
+    for (const target of targetTexts) {
+      const found = rule.trigger_patterns.find((pattern) => textContainsPattern(target.text, pattern));
+      if (found) {
+        matchedPattern = found;
+        matchedOn = target.matchedOn;
+        break;
+      }
+    }
+
     if (matchedPattern) {
       return {
         passed: false,
@@ -77,9 +133,9 @@ const checkResponse = async (responseText, elder, userText = '') => {
         action: rule.action,
         safe_response: rule.redirect_response,
         severity: rule.severity,
-        original_intent: applyOn === 'user' ? userInput : assistantText,
+        original_intent: matchedOn === 'user' ? userInput : assistantText,
         elder_id: elder?._id,
-        matched_on: applyOn,
+        matched_on: matchedOn,
         matched_pattern: matchedPattern
       };
     }

@@ -8,15 +8,27 @@ router.use(requireAuth);
 
 const isValidHHMM = (value) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || ''));
 const MAX_CLONE_AUDIO_BYTES = Number(process.env.MAX_CLONE_AUDIO_BYTES || 8 * 1024 * 1024);
+const MIN_CLONE_AUDIO_BYTES = Number(process.env.MIN_CLONE_AUDIO_BYTES || 12000);
+const SUPPORTED_CLONE_MIME_TYPES = new Set([
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/wave',
+  'audio/mp4',
+  'audio/m4a',
+  'audio/webm',
+  'audio/ogg'
+]);
 
 const parseAudioPayload = (audioInput) => {
   const raw = String(audioInput || '').trim();
   if (!raw) return null;
 
-  const dataUrlMatch = raw.match(/^data:([^;]+);base64,(.+)$/i);
+  const dataUrlMatch = raw.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/i);
   if (dataUrlMatch) {
     return {
-      mimeType: dataUrlMatch[1],
+      mimeType: String(dataUrlMatch[1] || '').toLowerCase(),
       buffer: Buffer.from(dataUrlMatch[2], 'base64')
     };
   }
@@ -158,15 +170,30 @@ router.post('/:id/voice-clone', async (req, res, next) => {
       return res.status(400).json({ message: 'audio_base64 is required for voice cloning.' });
     }
 
+    if (parsedAudio.buffer.length < MIN_CLONE_AUDIO_BYTES) {
+      return res.status(400).json({ message: 'Recording too short. Please record at least 6-10 seconds of clear voice.' });
+    }
+
     if (parsedAudio.buffer.length > MAX_CLONE_AUDIO_BYTES) {
       return res.status(400).json({ message: 'Audio file is too large. Please upload a shorter recording.' });
+    }
+
+    const effectiveMimeType = String(mimeType || parsedAudio.mimeType || '')
+      .toLowerCase()
+      .split(';')[0]
+      .trim();
+
+    if (effectiveMimeType && !SUPPORTED_CLONE_MIME_TYPES.has(effectiveMimeType)) {
+      return res.status(400).json({
+        message: `Unsupported audio format (${effectiveMimeType}). Use mp3, wav, m4a, webm, or ogg.`
+      });
     }
 
     const cloned = await cloneVoiceFromAudio({
       name: voiceName || `${elder.name} Voice`,
       audioBuffer: parsedAudio.buffer,
       fileName,
-      mimeType: mimeType || parsedAudio.mimeType
+      mimeType: effectiveMimeType || 'audio/webm'
     });
 
     if (!cloned?.voice_id) {
