@@ -12,9 +12,9 @@ const {
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504]);
 const LLM_PROVIDER = String(process.env.LLM_PROVIDER || 'gemini').toLowerCase();
 const normalizeGeminiModelName = (value) => String(value || '').trim().replace(/^models\//, '');
-const GEMINI_MODEL = normalizeGeminiModelName(process.env.GEMINI_MODEL || 'gemini-2.0-flash');
+const GEMINI_MODEL = normalizeGeminiModelName(process.env.GEMINI_MODEL || 'gemini-flash-latest');
 const GEMINI_FALLBACK_MODELS = String(
-  process.env.GEMINI_FALLBACK_MODELS || 'gemini-2.0-flash,gemini-2.0-flash-lite,gemini-2.5-flash'
+  process.env.GEMINI_FALLBACK_MODELS || 'gemini-flash-lite-latest,gemini-2.5-flash-lite'
 )
   .split(',')
   .map((m) => normalizeGeminiModelName(m))

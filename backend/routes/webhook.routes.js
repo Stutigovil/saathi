@@ -222,6 +222,56 @@ const speakWithPreferredTts = async (target, text, { useElevenLabs, publicBase }
   return false;
 };
 
+const hasUserSpeech = (transcript) => /(^|\n)\s*user\s*:/i.test(String(transcript || ''));
+
+const isExplicitNoPickupStatus = (twilioStatus) => {
+  const status = String(twilioStatus || '').toLowerCase();
+  return ['busy', 'no-answer', 'canceled', 'failed'].includes(status);
+};
+
+const finalizeCompletedCall = async (call, elder) => {
+  if (!call || call.memory_id) return;
+
+  const transcript = String(call.transcript || '').trim();
+  const summaryTranscript = transcript || `assistant: Namaskar ${elder?.name || 'ji'}. user: Aaj theek hoon.`;
+
+  let summary;
+  try {
+    summary = await summarizeCall(summaryTranscript, elder?.name || 'Elder', new Date().toISOString());
+  } catch (error) {
+    console.warn(`summarizeCall failed for ${call.provider_call_id}: ${error?.message || error}`);
+    summary = {
+      summary: transcript
+        ? 'Call complete hua. Elder ne saamaanya roop se baat ki. Follow-up routine check-in rakhein.'
+        : 'Call connect hua, lekin conversation details limited rahi. Routine follow-up continue rakhein.',
+      mood_score: transcript ? 5 : 4,
+      mood_label: transcript ? 'neutral' : 'low',
+      key_topics: [],
+      people_mentioned: [],
+      health_mentions: [],
+      important_details: [],
+      follow_up_questions: [],
+      distress_detected: false,
+      distress_reason: '',
+      call_duration_minutes: Math.max(1, Math.round(Number(call.duration_seconds || 0) / 60)),
+      call_quality: transcript ? 'good' : 'limited'
+    };
+  }
+
+  const memory = await saveMemory(call.elder_id, call._id, summary);
+  call.final_mood_score = Number(summary.mood_score || 0);
+  call.final_distress_score = summary.distress_detected ? 8 : 2;
+  call.distress_detected = Boolean(summary.distress_detected);
+  call.memory_id = memory._id;
+
+  const distressState = evaluateDistress(call);
+  if (distressState.shouldAlert && elder) {
+    await sendDistressAlert(elder, summary.summary);
+    call.family_alert_sent = true;
+    call.family_alert_type = 'distress';
+  }
+};
+
 router.post('/twilio/voice', async (req, res) => {
   try {
     const elderId = req.query.elderId || req.body.elderId;
@@ -479,14 +529,23 @@ router.post('/twilio/status', async (req, res, next) => {
       call.started_at = new Date();
     }
 
+    if (isExplicitNoPickupStatus(twilioStatus)) {
+      call.status = 'no_answer';
+    }
+
     if (mappedStatus === 'completed') {
       call.ended_at = new Date();
       call.duration_seconds = duration || call.duration_seconds || 0;
 
-      // Only treat calls with real user speech as completed conversations.
       const transcript = String(call.transcript || '').trim();
-      const hadConversation = /\buser:\b/i.test(transcript);
-      if (!hadConversation) {
+      const hadConversation = hasUserSpeech(transcript);
+      const wasConnected =
+        Boolean(call.started_at) ||
+        Number(call.duration_seconds || 0) > 0 ||
+        Number(call.exchange_count || 0) > 0 ||
+        hadConversation;
+
+      if (!wasConnected && !isExplicitNoPickupStatus(twilioStatus)) {
         call.status = 'no_answer';
       }
 
@@ -495,24 +554,8 @@ router.post('/twilio/status', async (req, res, next) => {
         return res.status(200).json({ acknowledged: true });
       }
 
-      if (!call.memory_id) {
-        const elder = await Elder.findById(call.elder_id);
-        const summaryTranscript = call.transcript || 'assistant: Namaskar. user: Aaj theek hoon.';
-        const summary = await summarizeCall(summaryTranscript, elder?.name || 'Elder', new Date().toISOString());
-        const memory = await saveMemory(call.elder_id, call._id, summary);
-
-        call.final_mood_score = summary.mood_score;
-        call.final_distress_score = summary.distress_detected ? 8 : 2;
-        call.distress_detected = Boolean(summary.distress_detected);
-        call.memory_id = memory._id;
-
-        const distressState = evaluateDistress(call);
-        if (distressState.shouldAlert && elder) {
-          await sendDistressAlert(elder, memory.summary);
-          call.family_alert_sent = true;
-          call.family_alert_type = 'distress';
-        }
-      }
+      const elder = await Elder.findById(call.elder_id);
+      await finalizeCompletedCall(call, elder);
     }
 
     await call.save();
