@@ -124,9 +124,43 @@ const sendWeeklySummary = async (elder, weeklySummary) => {
   });
 };
 
+const sendNoPickupAlert = async (elder, scheduleTime) => {
+  const messageText = `Sathi update: ${elder.name} ji ne aaj ${scheduleTime} aur 10 minute baad retry call dono receive nahi kiye. Mood score 0 mark kiya gaya hai. Kripya unse jaldi contact karein.`;
+
+  const sentTo = [];
+  let twilioSid = null;
+
+  for (const member of elder.family || []) {
+    const message = await sendWhatsAppMessage({
+      to: member.whatsapp || member.phone,
+      body: messageText
+    });
+
+    twilioSid = twilioSid || message.sid;
+    sentTo.push({
+      family_member_name: member.name,
+      phone: member.whatsapp || member.phone,
+      delivered: true,
+      delivered_at: new Date()
+    });
+  }
+
+  return Alert.create({
+    elder_id: elder._id,
+    type: 'no_pickup',
+    urgency: 'medium',
+    sent_to: sentTo,
+    message_text: messageText,
+    twilio_sid: twilioSid,
+    sent_at: new Date(),
+    created_at: new Date()
+  });
+};
+
 module.exports = {
   evaluateDistress,
   sendDistressAlert,
   sendMissedCallAlert,
-  sendWeeklySummary
+  sendWeeklySummary,
+  sendNoPickupAlert
 };

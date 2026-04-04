@@ -5,7 +5,7 @@
   "scripts": {
     "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install",
     "seed": "cd backend && npm run seed",
-    "dev": "concurrently -n backend,frontend -c cyan,magenta \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
+    "dev": "concurrently -n backend,frontend,scheduler -c cyan,magenta,yellow \"cd backend && npm run dev\" \"cd frontend && npm run dev\" \"cd backend && npm run scheduler\"",
     "dev:clean": "node scripts/dev-clean.js",
     "dev:with-seed": "npm run seed && npm run dev",
     "scheduler": "cd backend && npm run scheduler"

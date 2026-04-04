@@ -56,6 +56,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload)
     }),
+  updateElderSchedule: (elderId: string, payload: { schedule_time: string; schedule_days?: string[]; is_active?: boolean }) =>
+    request<any>(`/api/elders/${elderId}/schedule`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
   triggerCall: (elderId: string) =>
     request<any>(`/api/calls/trigger/${elderId}`, {
       method: 'POST'

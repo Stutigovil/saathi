@@ -483,10 +483,22 @@ router.post('/twilio/status', async (req, res, next) => {
       call.ended_at = new Date();
       call.duration_seconds = duration || call.duration_seconds || 0;
 
+      // Only treat calls with real user speech as completed conversations.
+      const transcript = String(call.transcript || '').trim();
+      const hadConversation = /\buser:\b/i.test(transcript);
+      if (!hadConversation) {
+        call.status = 'no_answer';
+      }
+
+      if (call.status === 'no_answer') {
+        await call.save();
+        return res.status(200).json({ acknowledged: true });
+      }
+
       if (!call.memory_id) {
         const elder = await Elder.findById(call.elder_id);
-        const transcript = call.transcript || 'assistant: Namaskar. user: Aaj theek hoon.';
-        const summary = await summarizeCall(transcript, elder?.name || 'Elder', new Date().toISOString());
+        const summaryTranscript = call.transcript || 'assistant: Namaskar. user: Aaj theek hoon.';
+        const summary = await summarizeCall(summaryTranscript, elder?.name || 'Elder', new Date().toISOString());
         const memory = await saveMemory(call.elder_id, call._id, summary);
 
         call.final_mood_score = summary.mood_score;

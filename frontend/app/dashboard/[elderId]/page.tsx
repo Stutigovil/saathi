@@ -122,7 +122,7 @@ export default function ElderDetailPage() {
           <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="Phone" value={form.phone} onChange={(e) => updateField('phone', e.target.value)} />
           <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="City" value={form.city} onChange={(e) => updateField('city', e.target.value)} />
           <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="Language" value={form.language} onChange={(e) => updateField('language', e.target.value)} />
-          <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="Schedule Time (HH:MM)" value={form.schedule_time} onChange={(e) => updateField('schedule_time', e.target.value)} />
+          <input className="rounded-lg border border-border bg-background px-3 py-2" type="time" placeholder="Schedule Time (HH:MM)" value={form.schedule_time} onChange={(e) => updateField('schedule_time', e.target.value)} />
           <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="Family Name" value={form.family_name} onChange={(e) => updateField('family_name', e.target.value)} />
           <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="Family Phone" value={form.family_phone} onChange={(e) => updateField('family_phone', e.target.value)} />
           <input className="rounded-lg border border-border bg-background px-3 py-2 md:col-span-2" placeholder="Family WhatsApp" value={form.family_whatsapp} onChange={(e) => updateField('family_whatsapp', e.target.value)} />

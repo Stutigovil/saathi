@@ -23,6 +23,7 @@ export default function ElderCard({ elder }: Props) {
         month: 'short'
       })
     : 'No calls yet';
+  const scheduleTime = elder?.schedule_time || 'Not set';
 
   return (
     <motion.div
@@ -47,7 +48,11 @@ export default function ElderCard({ elder }: Props) {
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-3 gap-2 text-center text-xs">
+        <div className="mb-4 grid grid-cols-2 gap-2 text-center text-xs">
+          <div className="rounded-lg bg-white/5 p-2">
+            <p className="text-gray-400">Schedule</p>
+            <p className="mt-1 text-white">{scheduleTime}</p>
+          </div>
           <div className="rounded-lg bg-white/5 p-2">
             <p className="text-gray-400">Last Call</p>
             <p className="mt-1 text-white">{lastCall}</p>
