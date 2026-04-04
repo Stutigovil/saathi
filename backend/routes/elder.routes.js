@@ -1,7 +1,10 @@
 const express = require('express');
+const multer = require('multer');
 const Elder = require('../models/Elder');
+const { createVoiceClone } = require('../services/elevenlabs.service');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/', async (req, res, next) => {
   try {
@@ -70,6 +73,66 @@ router.patch('/:id/active', async (req, res, next) => {
     }
 
     return res.json(elder);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post('/:id/voice-clone', upload.single('file'), async (req, res, next) => {
+  try {
+    const elder = await Elder.findById(req.params.id);
+    if (!elder) {
+      return res.status(404).json({ message: 'Elder not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'Voice sample file is required.' });
+    }
+
+    if (!['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav'].includes(req.file.mimetype)) {
+      return res.status(400).json({ message: 'Unsupported audio format. Use .mp3 or .wav.' });
+    }
+
+    const voiceName = String(req.body.name || `${elder.name}-voice`).trim() || 'UserVoice';
+
+    try {
+      const voiceId = await createVoiceClone({
+        name: voiceName,
+        fileBuffer: req.file.buffer,
+        fileName: req.file.originalname,
+        contentType: req.file.mimetype
+      });
+
+      console.info(`Voice clone result: elder=${elder._id} voice_id=${voiceId || 'none'}`);
+
+      if (!voiceId) {
+        return res.status(200).json({
+          message: 'Voice cloning failed. Using default voice.',
+          voice_id: elder.voice_id || null,
+          fallback: true
+        });
+      }
+
+      elder.voice_id = voiceId;
+      elder.voice_name = voiceName;
+      elder.updated_at = new Date();
+      await elder.save();
+
+      console.info(`Voice clone stored: elder=${elder._id} voice_id=${elder.voice_id}`);
+
+      return res.status(201).json({
+        message: 'Voice cloned successfully.',
+        voice_id: voiceId,
+        voice_name: voiceName
+      });
+    } catch (error) {
+      console.error('Voice cloning failed:', error?.message || error);
+      return res.status(200).json({
+        message: 'Voice cloning failed. Using default voice.',
+        voice_id: elder.voice_id || null,
+        fallback: true
+      });
+    }
   } catch (error) {
     return next(error);
   }

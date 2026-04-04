@@ -97,6 +97,8 @@ router.post('/twilio/voice', async (req, res) => {
   try {
     const elderId = req.query.elderId || req.body.elderId;
     const elder = elderId ? await Elder.findById(elderId).lean() : null;
+    const effectiveVoiceId = elder?.voice_id || null;
+    console.info(`TTS intro: elderId=${elderId || 'n/a'} voice_id=${effectiveVoiceId || 'default'}`);
     const introText = getHindiIntroText(elder?.name);
     const publicBase = getPublicBaseUrl();
     const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
@@ -112,7 +114,7 @@ router.post('/twilio/voice', async (req, res) => {
     });
 
     if (useElevenLabs) {
-      const introToken = await cacheTtsAudio(introText);
+      const introToken = await cacheTtsAudio(introText, effectiveVoiceId);
       if (introToken) {
         gather.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(introToken)}`);
       } else {
@@ -160,7 +162,7 @@ router.get('/twilio/tts', async (req, res) => {
       text = getHindiClosingText();
     }
 
-    const tts = await synthesizeSpeech(text);
+    const tts = await synthesizeSpeech(text, effectiveVoiceId);
 
     if (!tts?.audioBuffer) {
       return res.status(404).send('TTS unavailable');
@@ -183,6 +185,10 @@ router.post('/twilio/gather', async (req, res) => {
     const turn = Math.max(1, Number(req.query.turn || 1));
     const nextTurn = turn + 1;
     const elder = elderId ? await Elder.findById(elderId).lean() : null;
+    const effectiveVoiceId = call?.voice_id || elder?.voice_id || null;
+    console.info(
+      `TTS gather: callId=${call?._id || 'n/a'} call_voice=${call?.voice_id || 'none'} elder_voice=${elder?.voice_id || 'none'} using=${effectiveVoiceId || 'default'}`
+    );
 
     const vr = new TwiML.VoiceResponse();
 
@@ -268,8 +274,8 @@ router.post('/twilio/gather', async (req, res) => {
     if (shouldEndCall) {
       if (useElevenLabs) {
         const [responseToken, closingToken] = await Promise.all([
-          cacheTtsAudio(safeResponseText),
-          cacheTtsAudio(getHindiClosingText())
+          cacheTtsAudio(safeResponseText, effectiveVoiceId),
+          cacheTtsAudio(getHindiClosingText(), effectiveVoiceId)
         ]);
 
         if (responseToken) {

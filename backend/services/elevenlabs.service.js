@@ -1,4 +1,5 @@
 const axios = require('axios');
+const FormData = require('form-data');
 
 const ELEVENLABS_COOLDOWN_MS = Number(process.env.ELEVENLABS_COOLDOWN_MS || 60 * 60 * 1000);
 let elevenlabsBlockedUntil = 0;
@@ -6,10 +7,9 @@ let elevenlabsBlockedUntil = 0;
 const isBlocked = () => Date.now() < elevenlabsBlockedUntil;
 const isEnabled = () => process.env.ELEVENLABS_ENABLED === 'true';
 
-const synthesizeSpeech = async (
-  text,
-  voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
-) => {
+const getDefaultVoiceId = () => process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
+
+const synthesizeSpeech = async (text, voiceId = getDefaultVoiceId()) => {
   if (!isEnabled()) {
     console.warn('ElevenLabs disabled via ELEVENLABS_ENABLED.');
     return {
@@ -37,9 +37,10 @@ const synthesizeSpeech = async (
     };
   }
 
-  try {
-    const response = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+  const requestTts = async (targetVoiceId) => {
+    console.info(`ElevenLabs TTS request voice_id=${targetVoiceId}`);
+    return axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${targetVoiceId}`,
       {
         text,
         model_id: 'eleven_multilingual_v2',
@@ -57,6 +58,10 @@ const synthesizeSpeech = async (
         timeout: 20000
       }
     );
+  };
+
+  try {
+    const response = await requestTts(voiceId);
 
     console.info(`ElevenLabs TTS generated (${response?.data?.byteLength || 0} bytes).`);
 
@@ -78,10 +83,49 @@ const synthesizeSpeech = async (
       };
     }
 
+    const defaultVoice = getDefaultVoiceId();
+    if (voiceId && voiceId !== defaultVoice) {
+      console.warn('ElevenLabs voice failed, retrying with default voice.');
+      try {
+        const response = await requestTts(defaultVoice);
+        console.info(`ElevenLabs TTS generated (${response?.data?.byteLength || 0} bytes).`);
+        return {
+          audioBuffer: Buffer.from(response.data),
+          mimeType: 'audio/mpeg'
+        };
+      } catch (fallbackError) {
+        throw fallbackError;
+      }
+    }
+
     throw error;
   }
 };
 
+const createVoiceClone = async ({ name, fileBuffer, fileName, contentType }) => {
+  if (!process.env.ELEVENLABS_API_KEY) {
+    throw new Error('ElevenLabs API key missing');
+  }
+
+  const form = new FormData();
+  form.append('name', String(name || 'UserVoice'));
+  form.append('files', fileBuffer, {
+    filename: fileName || 'voice-sample.wav',
+    contentType: contentType || 'audio/wav'
+  });
+
+  const response = await axios.post('https://api.elevenlabs.io/v1/voices/add', form, {
+    headers: {
+      'xi-api-key': process.env.ELEVENLABS_API_KEY,
+      ...form.getHeaders()
+    },
+    timeout: 20000
+  });
+
+  return response?.data?.voice_id;
+};
+
 module.exports = {
-  synthesizeSpeech
+  synthesizeSpeech,
+  createVoiceClone
 };

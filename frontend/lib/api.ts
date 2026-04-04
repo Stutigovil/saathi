@@ -25,6 +25,29 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+async function requestFormData<T>(path: string, form: FormData, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    body: form,
+    ...options,
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    const raw = await response.text();
+    let message = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      message = parsed?.message || raw;
+    } catch {
+      // ignore non-JSON body
+    }
+    throw new Error(message || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export const api = {
   getElders: () => request<any[]>('/api/elders'),
   getElderDashboard: (id: string) => request<any>(`/api/dashboard/elder/${id}`),
@@ -41,6 +64,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload)
     }),
+  uploadElderVoice: (elderId: string, file: File, name?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (name) form.append('name', name);
+    return requestFormData<any>(`/api/elders/${elderId}/voice-clone`, form);
+  },
   triggerCall: (elderId: string) =>
     request<any>(`/api/calls/trigger/${elderId}`, {
       method: 'POST'

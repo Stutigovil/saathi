@@ -15,6 +15,10 @@ export default function ElderDetailPage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [voiceFile, setVoiceFile] = useState<File | null>(null);
+  const [voiceName, setVoiceName] = useState('');
+  const [voiceUploading, setVoiceUploading] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState('');
   const [form, setForm] = useState({
     name: '',
     age: 70,
@@ -89,6 +93,33 @@ export default function ElderDetailPage() {
     }
   };
 
+  const uploadVoice = async () => {
+    if (!elderId || !voiceFile) return;
+
+    setVoiceUploading(true);
+    setVoiceMessage('');
+    setErrorMessage('');
+
+    try {
+      const result = await api.uploadElderVoice(elderId, voiceFile, voiceName.trim());
+      setVoiceMessage(result?.message || 'Voice uploaded successfully.');
+      setData((prev: any) => ({
+        ...prev,
+        elder: {
+          ...prev?.elder,
+          voice_id: result?.voice_id || prev?.elder?.voice_id,
+          voice_name: result?.voice_name || prev?.elder?.voice_name
+        }
+      }));
+      setVoiceFile(null);
+      setVoiceName('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to upload voice sample.');
+    } finally {
+      setVoiceUploading(false);
+    }
+  };
+
   return (
     <main className="mx-auto min-h-screen max-w-6xl space-y-8 px-6 py-8">
       <header>
@@ -122,6 +153,43 @@ export default function ElderDetailPage() {
           <input className="rounded-lg border border-border bg-background px-3 py-2" placeholder="Family Phone" value={form.family_phone} onChange={(e) => updateField('family_phone', e.target.value)} />
           <input className="rounded-lg border border-border bg-background px-3 py-2 md:col-span-2" placeholder="Family WhatsApp" value={form.family_whatsapp} onChange={(e) => updateField('family_whatsapp', e.target.value)} />
         </div>
+      </section>
+
+      <section className="soft-card space-y-4 p-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Voice Clone</h2>
+            <p className="text-sm text-gray-400">Upload a short MP3/WAV sample to clone the elder's voice.</p>
+          </div>
+          <button
+            onClick={uploadVoice}
+            disabled={voiceUploading || !voiceFile}
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {voiceUploading ? 'Uploading...' : 'Upload Voice'}
+          </button>
+        </div>
+
+        {voiceMessage ? <p className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{voiceMessage}</p> : null}
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <input
+            className="rounded-lg border border-border bg-background px-3 py-2"
+            placeholder="Voice name (optional)"
+            value={voiceName}
+            onChange={(e) => setVoiceName(e.target.value)}
+          />
+          <input
+            className="rounded-lg border border-border bg-background px-3 py-2"
+            type="file"
+            accept=".mp3,.wav,audio/mpeg,audio/wav"
+            onChange={(e) => setVoiceFile(e.target.files?.[0] || null)}
+          />
+        </div>
+
+        <p className="text-xs text-gray-500">
+          Current voice: {data?.elder?.voice_name || data?.elder?.voice_id || 'Default'}
+        </p>
       </section>
 
       <section>

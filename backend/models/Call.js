@@ -37,6 +37,7 @@ const callSchema = new mongoose.Schema(
     },
     attempt_number: { type: Number, default: 1 },
     transcript: { type: String, trim: true },
+    voice_id: { type: String, trim: true },
     base_system_prompt: { type: String, trim: true },
     dynamic_prompt_state: { type: String, trim: true },
     exchange_count: { type: Number, default: 0 },
