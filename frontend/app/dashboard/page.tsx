@@ -12,6 +12,19 @@ import MoodChart from '@/components/ui/MoodChart';
 import DistressAlert from '@/components/ui/DistressAlert';
 import LiveIndicator from '@/components/ui/LiveIndicator';
 import { api } from '@/lib/api';
+import {
+  Phone, Clock, Activity, Shield, UserPlus, Mic2,
+  TrendingUp, TrendingDown, MessageSquare, Heart, Calendar, Users
+} from 'lucide-react';
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 20 },
+  show: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.08, duration: 0.4, ease: 'easeOut' }
+  })
+};
 
 export default function DashboardPage() {
   const [elders, setElders] = useState<any[]>([]);
@@ -157,227 +170,288 @@ export default function DashboardPage() {
     }
   };
 
+  const statCards = [
+    {
+      label: 'Last Call',
+      value: latestCall?.created_at
+        ? new Date(latestCall.created_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
+        : 'No call yet',
+      sub: latestCallMetaText,
+      icon: Phone,
+      color: latestCall?.status === 'no_answer' ? 'text-amber-400' : 'text-emerald-400',
+      bgColor: latestCall?.status === 'no_answer' ? 'bg-amber-500/10' : 'bg-emerald-500/10'
+    },
+    {
+      label: 'Mood Score',
+      value: `${latestMemory?.mood_score ?? 0} / 10`,
+      sub: moodDelta === null ? 'Trend building...' : moodDelta >= 0 ? `↑ ${moodDelta} vs last call` : `↓ ${Math.abs(moodDelta)} vs last call`,
+      icon: moodDelta !== null && moodDelta >= 0 ? TrendingUp : TrendingDown,
+      color: 'text-emerald-400',
+      bgColor: 'bg-emerald-500/10'
+    },
+    {
+      label: 'Next Call',
+      value: nextCallText,
+      sub: retryTime ? 'Auto-retry after missed call' : selectedElder?.is_active ? 'Active schedule' : 'Paused',
+      icon: Clock,
+      color: 'text-accent',
+      bgColor: 'bg-accent/10'
+    },
+    {
+      label: 'Safety & Alerts',
+      value: `${dashboard?.armoriq_blocks_count ?? 0}`,
+      sub: 'ArmorIQ interventions logged',
+      icon: Shield,
+      color: 'text-violet-400',
+      bgColor: 'bg-violet-500/10'
+    }
+  ];
+
   return (
     <AuthGuard>
       <div className="min-h-screen bg-background">
-      <Navbar />
-      <main className="flex min-h-[calc(100vh-73px)] bg-background">
-      <Sidebar elder={selectedElder} onTriggerCall={triggerCall} />
+        <Navbar />
+        <main className="flex min-h-[calc(100vh-73px)]">
+          <Sidebar elder={selectedElder} onTriggerCall={triggerCall} />
 
-      <section className="flex-1 p-6 lg:p-8">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold lg:text-3xl">Family Dashboard</h1>
-            <p className="text-sm text-gray-400">Track mood, calls, safety and memory across every elder profile.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link href="/onboard" className="rounded-xl border border-border px-4 py-2 text-sm hover:border-accent">
-              + Add Elder
-            </Link>
-            {selectedElderId ? (
-              <Link
-                href={`/dashboard/${selectedElderId}#voice-cloning`}
-                className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 hover:border-emerald-400"
-              >
-                Open Voice Cloning
-              </Link>
-            ) : null}
-            <select
-              value={selectedElderId}
-              onChange={(e) => setSelectedElderId(e.target.value)}
-              className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
-            >
-              {elders.map((elder) => (
-                <option key={elder._id} value={elder._id}>
-                  {elder.name} · {elder.city}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <LiveIndicator connected pulseOnUpdate={pulse} />
-
-        <DistressAlert
-          show={showAlert}
-          onDismiss={() => setShowAlert(false)}
-          message={dashboard?.memories?.[0]?.summary || 'Sathi noticed signs of low mood in the latest call.'}
-        />
-
-        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
-            <p className="text-sm text-gray-400">Last Call</p>
-            <p className="mt-1 text-xl font-semibold text-white">
-              {latestCall?.created_at
-                ? new Date(latestCall.created_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
-                : 'No call yet'}
-            </p>
-            <p className={`mt-1 text-sm ${latestCall?.status === 'no_answer' ? 'text-amber-300' : 'text-gray-300'}`}>
-              {latestCallMetaText}
-            </p>
-          </motion.div>
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
-            <p className="text-sm text-gray-400">Mood Score</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-400">{latestMemory?.mood_score ?? 0} / 10</p>
-            <p className="mt-1 text-sm text-gray-300">
-              {moodDelta === null ? 'Trend building...' : moodDelta >= 0 ? `↑ ${moodDelta} vs last call` : `↓ ${Math.abs(moodDelta)} vs last call`}
-            </p>
-          </motion.div>
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
-            <p className="text-sm text-gray-400">Next Call</p>
-            <p className="mt-1 text-xl font-semibold text-white">{nextCallText}</p>
-            <p className="mt-1 text-sm text-gray-300">
-              {retryTime
-                ? 'Auto-retry after missed call'
-                : selectedElder?.is_active
-                  ? 'Active schedule'
-                  : 'Paused'}
-            </p>
-          </motion.div>
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
-            <p className="text-sm text-gray-400">Safety & Alerts</p>
-            <p className="mt-1 text-2xl font-semibold text-white">{dashboard?.armoriq_blocks_count ?? 0}</p>
-            <p className="mt-1 text-sm text-gray-300">ArmorIQ interventions logged</p>
-          </motion.div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-          <div className="space-y-6 xl:col-span-2">
-            {!!chartData.length && <MoodChart data={chartData} />}
-
-            <div className="soft-card p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Today&apos;s Conversation</h2>
-                <span className="rounded-full border border-border px-2.5 py-1 text-xs text-gray-300">
-                  {latestMemory?.created_at ? formatDistanceToNow(new Date(latestMemory.created_at), { addSuffix: true }) : 'No update'}
-                </span>
+          <section className="flex-1 overflow-y-auto p-6 lg:p-8">
+            {/* Header */}
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h1 className="font-heading text-2xl font-bold text-white lg:text-3xl">Family Dashboard</h1>
+                <p className="mt-1 text-sm text-muted">Track mood, calls, safety and memory across every elder profile.</p>
               </div>
-
-              <p className="text-gray-200">{latestMemory?.summary || 'No summary yet. Trigger a call to generate memory insights.'}</p>
-
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div>
-                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">Topics discussed</p>
-                  <div className="flex flex-wrap gap-2">
-                    {(latestMemory?.key_topics || []).length ? (
-                      (latestMemory?.key_topics || []).map((tag: string) => (
-                        <span key={tag} className="rounded-full bg-accent/20 px-3 py-1 text-xs text-violet-200">
-                          {tag}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-sm text-gray-500">No topics available</span>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">People mentioned</p>
-                  <div className="flex flex-wrap gap-2">
-                    {(latestMemory?.people_mentioned || []).length ? (
-                      (latestMemory?.people_mentioned || []).map((person: string) => (
-                        <span key={person} className="rounded-full bg-white/10 px-3 py-1 text-xs text-gray-200">
-                          {person}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-sm text-gray-500">No people mentioned</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 border-t border-border pt-4">
-                <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">Ask next time</p>
-                {(latestMemory?.follow_up_questions || []).length ? (
-                  <ul className="space-y-1 text-sm text-gray-300">
-                    {(latestMemory?.follow_up_questions || []).slice(0, 3).map((question: string) => (
-                      <li key={question}>• {question}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-gray-500">No follow-up prompts yet</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Link href="/onboard" className="btn-ghost flex items-center gap-1.5 text-sm">
+                  <UserPlus className="h-4 w-4" />
+                  Add Elder
+                </Link>
+                {selectedElderId && (
+                  <Link
+                    href={`/dashboard/${selectedElderId}#voice-cloning`}
+                    className="btn-ghost flex items-center gap-1.5 text-sm text-emerald-400 hover:text-emerald-300"
+                  >
+                    <Mic2 className="h-4 w-4" />
+                    Voice Clone
+                  </Link>
                 )}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="soft-card p-5">
-              <h3 className="text-base font-semibold">Health Snapshot</h3>
-              <p className="mt-1 text-sm text-gray-400">Current elder profile highlights</p>
-
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="rounded-lg bg-white/5 p-3">
-                  <p className="text-gray-400">Primary Contact</p>
-                  <p className="mt-1 text-white">{selectedElder?.family?.[0]?.name || 'Not set'}</p>
-                </div>
-                <div className="rounded-lg bg-white/5 p-3">
-                  <p className="text-gray-400">Health Mentions</p>
-                  <p className="mt-1 text-white">{(latestMemory?.health_mentions || []).join(', ') || 'No major concerns'}</p>
-                </div>
-                <div className="rounded-lg bg-white/5 p-3">
-                  <p className="text-gray-400">Mood Range (7 days)</p>
-                  <p className="mt-1 text-white">
-                    {chartBounds.low === null ? 'No data' : `${chartBounds.low} → ${chartBounds.high}`}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="soft-card p-5">
-              <h3 className="text-base font-semibold">Quick Actions</h3>
-              <div className="mt-4 space-y-2">
-                <div className="rounded-lg border border-border p-3">
-                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">Daily Schedule (IST)</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="time"
-                      value={scheduleTime}
-                      onChange={(e) => setScheduleTime(e.target.value)}
-                      className="flex-1 rounded-lg border border-border bg-card px-3 py-2 text-sm"
-                    />
-                    <button
-                      onClick={saveSchedule}
-                      disabled={savingSchedule || !selectedElderId}
-                      className="rounded-lg border border-border px-3 py-2 text-sm text-gray-200 hover:border-accent disabled:opacity-60"
-                    >
-                      {savingSchedule ? 'Saving...' : 'Save'}
-                    </button>
-                  </div>
-                  {scheduleMessage ? <p className="mt-2 text-xs text-gray-400">{scheduleMessage}</p> : null}
-                </div>
-                <button
-                  onClick={triggerCall}
-                  disabled={triggeringCall || !selectedElderId}
-                  className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white shadow-glow-violet disabled:opacity-60"
+                <select
+                  value={selectedElderId}
+                  onChange={(e) => setSelectedElderId(e.target.value)}
+                  className="input-glass max-w-[200px] !py-2 text-sm"
                 >
-                  {triggeringCall ? 'Triggering call...' : 'Trigger Call'}
-                </button>
-                <Link href={selectedElderId ? `/dashboard/${selectedElderId}` : '/dashboard'} className="block w-full rounded-lg border border-border px-4 py-2 text-center text-sm text-gray-200 hover:border-accent">
-                  Open Detailed Profile
-                </Link>
-                <Link href="/onboard" className="block w-full rounded-lg border border-border px-4 py-2 text-center text-sm text-gray-200 hover:border-accent">
-                  Add Another Elder
-                </Link>
+                  {elders.map((elder) => (
+                    <option key={elder._id} value={elder._id}>
+                      {elder.name} · {elder.city}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
-          </div>
-        </div>
 
-        <div className="mt-8">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">All Elders</h2>
-            <p className="text-xs text-gray-400">{elders.length} profile{elders.length === 1 ? '' : 's'}</p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {elders.map((elder) => (
-              <ElderCard key={elder._id} elder={elder} />
-            ))}
-          </div>
-        </div>
-      </section>
-      </main>
+            <LiveIndicator connected pulseOnUpdate={pulse} />
+
+            <DistressAlert
+              show={showAlert}
+              onDismiss={() => setShowAlert(false)}
+              message={dashboard?.memories?.[0]?.summary || 'Sathi noticed signs of low mood in the latest call.'}
+            />
+
+            {/* Stat Cards */}
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {statCards.map(({ label, value, sub, icon: Icon, color, bgColor }, i) => (
+                <motion.div
+                  key={label}
+                  custom={i}
+                  variants={cardVariants}
+                  initial="hidden"
+                  animate="show"
+                  whileHover={{ y: -2, transition: { duration: 0.2 } }}
+                  className="glass-card group p-5 transition-all duration-300 hover:border-white/[0.12]"
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-sm text-muted">{label}</p>
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${bgColor}`}>
+                      <Icon className={`h-4 w-4 ${color}`} />
+                    </div>
+                  </div>
+                  <p className="font-heading text-xl font-bold text-white">{value}</p>
+                  <p className={`mt-1 text-sm ${latestCall?.status === 'no_answer' && label === 'Last Call' ? 'text-amber-300' : 'text-muted'}`}>
+                    {sub}
+                  </p>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Main Grid */}
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+              <div className="space-y-6 xl:col-span-2">
+                {!!chartData.length && <MoodChart data={chartData} />}
+
+                {/* Today's Conversation */}
+                <div className="glass-card p-5 lg:p-6">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="font-heading text-lg font-semibold text-white">Today&apos;s Conversation</h2>
+                    <span className="rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1 text-xs text-muted">
+                      {latestMemory?.created_at ? formatDistanceToNow(new Date(latestMemory.created_at), { addSuffix: true }) : 'No update'}
+                    </span>
+                  </div>
+
+                  <p className="text-gray-200 leading-relaxed">{latestMemory?.summary || 'No summary yet. Trigger a call to generate memory insights.'}</p>
+
+                  <div className="mt-5 grid gap-5 md:grid-cols-2">
+                    <div>
+                      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                        <MessageSquare className="h-3 w-3" /> Topics discussed
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {(latestMemory?.key_topics || []).length ? (
+                          (latestMemory?.key_topics || []).map((tag: string) => (
+                            <span key={tag} className="rounded-full bg-accent/10 px-3 py-1 text-xs text-accent">
+                              {tag}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-dark">No topics available</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                        <Users className="h-3 w-3" /> People mentioned
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {(latestMemory?.people_mentioned || []).length ? (
+                          (latestMemory?.people_mentioned || []).map((person: string) => (
+                            <span key={person} className="rounded-full bg-white/[0.06] px-3 py-1 text-xs text-gray-200">
+                              {person}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-dark">No people mentioned</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 border-t border-white/[0.06] pt-5">
+                    <p className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                      <Heart className="h-3 w-3" /> Ask next time
+                    </p>
+                    {(latestMemory?.follow_up_questions || []).length ? (
+                      <ul className="space-y-1.5 text-sm text-gray-300">
+                        {(latestMemory?.follow_up_questions || []).slice(0, 3).map((question: string) => (
+                          <li key={question} className="flex items-start gap-2">
+                            <span className="mt-1.5 h-1 w-1 flex-shrink-0 rounded-full bg-accent" />
+                            {question}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-dark">No follow-up prompts yet</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column */}
+              <div className="space-y-6">
+                {/* Health Snapshot */}
+                <div className="glass-card p-5">
+                  <h3 className="font-heading text-base font-semibold text-white">Health Snapshot</h3>
+                  <p className="mt-1 text-sm text-muted">Current elder profile highlights</p>
+
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3">
+                      <p className="text-xs text-muted">Primary Contact</p>
+                      <p className="mt-1 text-sm font-medium text-white">{selectedElder?.family?.[0]?.name || 'Not set'}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3">
+                      <p className="text-xs text-muted">Health Mentions</p>
+                      <p className="mt-1 text-sm font-medium text-white">{(latestMemory?.health_mentions || []).join(', ') || 'No major concerns'}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3">
+                      <p className="text-xs text-muted">Mood Range (7 days)</p>
+                      <p className="mt-1 text-sm font-medium text-white">
+                        {chartBounds.low === null ? 'No data' : `${chartBounds.low} → ${chartBounds.high}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="glass-card p-5">
+                  <h3 className="font-heading text-base font-semibold text-white">Quick Actions</h3>
+                  <div className="mt-4 space-y-3">
+                    {/* Schedule */}
+                    <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-4">
+                      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                        <Calendar className="h-3 w-3" /> Daily Schedule (IST)
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="time"
+                          value={scheduleTime}
+                          onChange={(e) => setScheduleTime(e.target.value)}
+                          className="input-glass max-w-[140px] !py-2 text-sm"
+                        />
+                        <button
+                          onClick={saveSchedule}
+                          disabled={savingSchedule || !selectedElderId}
+                          className="btn-secondary !py-2 text-sm disabled:opacity-50"
+                        >
+                          {savingSchedule ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                      {scheduleMessage && <p className="mt-2 text-xs text-muted">{scheduleMessage}</p>}
+                    </div>
+
+                    <motion.button
+                      onClick={triggerCall}
+                      disabled={triggeringCall || !selectedElderId}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="btn-primary flex w-full items-center justify-center gap-2 text-sm"
+                    >
+                      <Phone className="h-4 w-4" />
+                      {triggeringCall ? 'Triggering call...' : 'Trigger Call Now'}
+                    </motion.button>
+
+                    <Link
+                      href={selectedElderId ? `/dashboard/${selectedElderId}` : '/dashboard'}
+                      className="btn-secondary flex w-full items-center justify-center gap-2 text-sm"
+                    >
+                      <Activity className="h-4 w-4" />
+                      Open Detailed Profile
+                    </Link>
+
+                    <Link
+                      href="/onboard"
+                      className="btn-ghost flex w-full items-center justify-center gap-2 border border-white/[0.06] text-sm"
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      Add Another Elder
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* All Elders */}
+            <div className="mt-8">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-heading text-lg font-semibold text-white">All Elders</h2>
+                <p className="text-xs text-muted">{elders.length} profile{elders.length === 1 ? '' : 's'}</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {elders.map((elder) => (
+                  <ElderCard key={elder._id} elder={elder} />
+                ))}
+              </div>
+            </div>
+          </section>
+        </main>
       </div>
     </AuthGuard>
   );
