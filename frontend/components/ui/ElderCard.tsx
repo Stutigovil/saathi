@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import WeeklyMoodBar from './WeeklyMoodBar';
 
 type Props = {
   elder: any;
@@ -15,6 +14,16 @@ export default function ElderCard({ elder }: Props) {
     .join('')
     .slice(0, 2)
     .toUpperCase();
+
+  const averageMood = Number(elder?.stats?.average_mood || 0);
+  const totalCalls = Number(elder?.stats?.total_calls || 0);
+  const lastCall = elder?.stats?.last_successful_call
+    ? new Date(elder.stats.last_successful_call).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short'
+      })
+    : 'No calls yet';
+  const scheduleTime = elder?.schedule_time || 'Not set';
 
   return (
     <motion.div
@@ -39,22 +48,24 @@ export default function ElderCard({ elder }: Props) {
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-3 gap-2 text-center text-xs">
+        <div className="mb-4 grid grid-cols-2 gap-2 text-center text-xs">
+          <div className="rounded-lg bg-white/5 p-2">
+            <p className="text-gray-400">Schedule</p>
+            <p className="mt-1 text-white">{scheduleTime}</p>
+          </div>
           <div className="rounded-lg bg-white/5 p-2">
             <p className="text-gray-400">Last Call</p>
-            <p className="mt-1 text-white">6:02 PM</p>
+            <p className="mt-1 text-white">{lastCall}</p>
           </div>
           <div className="rounded-lg bg-white/5 p-2">
             <p className="text-gray-400">Mood</p>
-            <p className="mt-1 text-white">{elder.stats?.average_mood?.toFixed?.(1) || '8.4'}</p>
+            <p className="mt-1 text-white">{averageMood > 0 ? averageMood.toFixed(1) : '—'}</p>
           </div>
           <div className="rounded-lg bg-white/5 p-2">
-            <p className="text-gray-400">Next</p>
-            <p className="mt-1 text-white">{elder.schedule_time || '18:00'}</p>
+            <p className="text-gray-400">Calls</p>
+            <p className="mt-1 text-white">{totalCalls}</p>
           </div>
         </div>
-
-        <WeeklyMoodBar scores={[8.5, 9, 9.5, 5.5, 7.5, 8, 8.5]} />
       </Link>
     </motion.div>
   );

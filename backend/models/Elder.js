@@ -37,6 +37,12 @@ const statsSchema = new mongoose.Schema(
 
 const elderSchema = new mongoose.Schema(
   {
+    created_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'FamilyUser',
+      required: true,
+      index: true
+    },
     name: { type: String, required: true, trim: true },
     age: { type: Number, required: true, min: 1 },
     phone: { type: String, required: true, unique: true, trim: true },

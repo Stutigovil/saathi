@@ -24,8 +24,8 @@ export default function LandingPage() {
           </h1>
           <p className="mt-5 max-w-xl text-lg text-gray-300">Sathi calls her every evening. In Hindi. And remembers everything.</p>
           <div className="mt-7 flex gap-3">
-            <Link href="/dashboard" className="rounded-xl bg-accent px-5 py-3 font-medium text-white shadow-glow-violet">
-              Open Live Dashboard
+            <Link href="/signup" className="rounded-xl bg-accent px-5 py-3 font-medium text-white shadow-glow-violet">
+              Start Free Setup
             </Link>
             <Link href="#how" className="rounded-xl border border-border px-5 py-3 text-gray-200 hover:border-accent">
               How it works

@@ -4,12 +4,16 @@ const Call = require('../models/Call');
 const Elder = require('../models/Elder');
 const { getMemoryContext } = require('../services/memory.service');
 const { placeCall } = require('../services/twilio-voice.service');
+const { requireAuth } = require('../middleware/auth.middleware');
 
 const router = express.Router();
+router.use(requireAuth);
 
 router.get('/', async (req, res, next) => {
   try {
-    const calls = await Call.find().sort({ created_at: -1 }).limit(100).lean();
+    const elders = await Elder.find({ created_by: req.user.id }).select('_id').lean();
+    const elderIds = elders.map((item) => item._id);
+    const calls = await Call.find({ elder_id: { $in: elderIds } }).sort({ created_at: -1 }).limit(100).lean();
     res.json(calls);
   } catch (error) {
     next(error);
@@ -18,6 +22,11 @@ router.get('/', async (req, res, next) => {
 
 router.get('/elder/:elderId', async (req, res, next) => {
   try {
+    const elder = await Elder.findOne({ _id: req.params.elderId, created_by: req.user.id }).lean();
+    if (!elder) {
+      return res.status(404).json({ message: 'Elder not found' });
+    }
+
     const calls = await Call.find({ elder_id: req.params.elderId }).sort({ created_at: -1 }).limit(50).lean();
     res.json(calls);
   } catch (error) {
@@ -27,7 +36,7 @@ router.get('/elder/:elderId', async (req, res, next) => {
 
 router.post('/trigger/:elderId', async (req, res, next) => {
   try {
-    const elder = await Elder.findById(req.params.elderId);
+    const elder = await Elder.findOne({ _id: req.params.elderId, created_by: req.user.id });
     if (!elder) {
       return res.status(404).json({ message: 'Elder not found' });
     }

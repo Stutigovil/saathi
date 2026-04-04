@@ -6,25 +6,34 @@ const Call = require('../models/Call');
 const Alert = require('../models/Alert');
 const ArmorIQBlock = require('../models/ArmorIQBlock');
 const { getMoodTrend } = require('../services/memory.service');
+const { requireAuth } = require('../middleware/auth.middleware');
 
 const router = express.Router();
+router.use(requireAuth);
+
+router.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'dashboard-routes',
+    timestamp: new Date().toISOString()
+  });
+});
 
 router.get('/elder/:id', async (req, res, next) => {
   try {
     const elderId = req.params.id;
+    const elder = await Elder.findOne({ _id: elderId, created_by: req.user.id }).lean();
+    if (!elder) {
+      return res.status(404).json({ message: 'Elder not found' });
+    }
 
-    const [elder, memories, moodTrend, calls, armoriqCount, alerts] = await Promise.all([
-      Elder.findById(elderId).lean(),
+    const [memories, moodTrend, calls, armoriqCount, alerts] = await Promise.all([
       Memory.find({ elder_id: elderId }).sort({ date: -1 }).limit(7).lean(),
       getMoodTrend(elderId, 7),
       Call.find({ elder_id: elderId }).sort({ created_at: -1 }).limit(3).lean(),
       ArmorIQBlock.countDocuments({ elder_id: elderId }),
       Alert.find({ elder_id: elderId }).sort({ sent_at: -1 }).limit(20).lean()
     ]);
-
-    if (!elder) {
-      return res.status(404).json({ message: 'Elder not found' });
-    }
 
     return res.json({
       elder,
@@ -41,6 +50,11 @@ router.get('/elder/:id', async (req, res, next) => {
 
 router.get('/mood-trend/:id', async (req, res, next) => {
   try {
+    const elder = await Elder.findOne({ _id: req.params.id, created_by: req.user.id }).lean();
+    if (!elder) {
+      return res.status(404).json({ message: 'Elder not found' });
+    }
+
     const days = Number(req.query.days || 7);
     const trend = await getMoodTrend(req.params.id, days);
     return res.json(trend);
@@ -51,6 +65,11 @@ router.get('/mood-trend/:id', async (req, res, next) => {
 
 router.get('/armoriq-log/:id', async (req, res, next) => {
   try {
+    const elder = await Elder.findOne({ _id: req.params.id, created_by: req.user.id }).lean();
+    if (!elder) {
+      return res.status(404).json({ message: 'Elder not found' });
+    }
+
     const blocks = await ArmorIQBlock.find({ elder_id: req.params.id }).sort({ timestamp: -1 }).limit(50).lean();
     return res.json(blocks);
   } catch (error) {
@@ -60,6 +79,11 @@ router.get('/armoriq-log/:id', async (req, res, next) => {
 
 router.get('/weekly-stats/:id', async (req, res, next) => {
   try {
+    const elder = await Elder.findOne({ _id: req.params.id, created_by: req.user.id }).lean();
+    if (!elder) {
+      return res.status(404).json({ message: 'Elder not found' });
+    }
+
     const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
     const elderId = req.params.id;
 

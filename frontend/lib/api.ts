@@ -1,10 +1,14 @@
+import { auth } from '@/lib/auth';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = auth.getToken();
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options?.headers || {})
     },
     cache: 'no-store'
@@ -26,6 +30,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  signUp: (payload: { name: string; email: string; password: string }) =>
+    request<{ token: string; user: { id: string; name: string; email: string } }>('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  signIn: (payload: { email: string; password: string }) =>
+    request<{ token: string; user: { id: string; name: string; email: string } }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  me: () => request<{ user: { id: string; name: string; email: string } }>('/api/auth/me'),
   getElders: () => request<any[]>('/api/elders'),
   getElderDashboard: (id: string) => request<any>(`/api/dashboard/elder/${id}`),
   getMoodTrend: (id: string, days = 7) => request<any[]>(`/api/dashboard/mood-trend/${id}?days=${days}`),
@@ -40,6 +55,23 @@ export const api = {
     request<any>(`/api/elders/${elderId}`, {
       method: 'PUT',
       body: JSON.stringify(payload)
+    }),
+  updateElderSchedule: (elderId: string, payload: { schedule_time: string; schedule_days?: string[]; is_active?: boolean }) =>
+    request<any>(`/api/elders/${elderId}/schedule`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  cloneElderVoice: (
+    elderId: string,
+    payload: { audio_base64: string; file_name: string; mime_type: string; voice_name?: string }
+  ) =>
+    request<any>(`/api/elders/${elderId}/voice-clone`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  resetElderVoice: (elderId: string) =>
+    request<any>(`/api/elders/${elderId}/voice-clone`, {
+      method: 'DELETE'
     }),
   triggerCall: (elderId: string) =>
     request<any>(`/api/calls/trigger/${elderId}`, {

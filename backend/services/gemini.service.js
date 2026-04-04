@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const {
   getSathiSystemPrompt,
   getConversationExtractionPrompt,
@@ -9,6 +10,17 @@ const {
 } = require('../prompts/sathi.prompts');
 
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504]);
+const LLM_PROVIDER = String(process.env.LLM_PROVIDER || 'gemini').toLowerCase();
+const normalizeGeminiModelName = (value) => String(value || '').trim().replace(/^models\//, '');
+const GEMINI_MODEL = normalizeGeminiModelName(process.env.GEMINI_MODEL || 'gemini-flash-latest');
+const GEMINI_FALLBACK_MODELS = String(
+  process.env.GEMINI_FALLBACK_MODELS || 'gemini-flash-lite-latest,gemini-2.5-flash-lite'
+)
+  .split(',')
+  .map((m) => normalizeGeminiModelName(m))
+  .filter(Boolean);
+const GEMINI_MAX_RETRIES = Number(process.env.GEMINI_MAX_RETRIES || 2);
+const GEMINI_RETRY_BASE_DELAY_MS = Number(process.env.GEMINI_RETRY_BASE_DELAY_MS || 700);
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const MAX_RETRIES = Number(process.env.GROQ_MAX_RETRIES || 2);
@@ -21,8 +33,11 @@ const GROQ_DISABLE_ON_QUOTA_ZERO = process.env.GROQ_DISABLE_ON_QUOTA_ZERO !== 'f
 let nextGroqRequestAt = 0;
 let groqBlockedUntil = 0;
 let groqBlockedReason = '';
+let geminiClient = null;
 
+const isGeminiEnabled = () => process.env.GEMINI_ENABLED !== 'false';
 const isGroqEnabled = () => process.env.GROQ_ENABLED !== 'false';
+const getGeminiApiKey = () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
 const parseJsonFromText = (text, fallback = {}) => {
   try {
@@ -118,21 +133,37 @@ const parseSummaryResponse = (rawText, fallback) => {
   return fallback;
 };
 
-const buildConversationMessages = (transcript, memoryContext, elderName) => {
+const buildConversationMessages = ({
+  transcript,
+  memoryContext,
+  elderName,
+  elderProfile,
+  baseSystemPrompt,
+  dynamicPromptState
+}) => {
   const formattedMemoryContext = getMemoryContextPrompt(
     Array.isArray(memoryContext)
       ? memoryContext
       : [String(memoryContext || 'No memory context available yet.')]
   );
 
-  const elderProfile = {
+  const fallbackElderProfile = {
     name: elderName,
     age: 'Unknown',
     city: 'Unknown',
     language: 'Hindi'
   };
 
-  const systemPrompt = getSathiSystemPrompt(elderProfile, formattedMemoryContext);
+  const effectiveElderProfile = {
+    ...fallbackElderProfile,
+    ...(elderProfile || {})
+  };
+
+  const systemPrompt =
+    String(dynamicPromptState || '').trim() ||
+    String(baseSystemPrompt || '').trim() ||
+    getSathiSystemPrompt(effectiveElderProfile, formattedMemoryContext);
+
   const userPrompt = getConversationExtractionPrompt(transcript, formattedMemoryContext, elderName);
 
   return [
@@ -203,7 +234,114 @@ const waitForRequestWindow = async () => {
   nextGroqRequestAt = Math.max(nextGroqRequestAt, Date.now()) + Math.max(0, MIN_REQUEST_GAP_MS);
 };
 
-const generateText = async ({ prompt, messages }) => {
+const isGeminiModelNotFoundError = (error) => {
+  const status = getErrorStatus(error);
+  const text = String(error?.message || '').toLowerCase();
+  return (
+    status === 404 ||
+    text.includes('model') && (text.includes('not found') || text.includes('not supported'))
+  );
+};
+
+const getGeminiModelClient = (modelName) => {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY (or GOOGLE_API_KEY) is not configured');
+  }
+
+  if (!geminiClient) {
+    geminiClient = new GoogleGenerativeAI(apiKey);
+  }
+
+  return geminiClient.getGenerativeModel({ model: modelName });
+};
+
+const buildGeminiPrompt = ({ prompt, messages }) => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return String(prompt || '');
+  }
+
+  return messages
+    .map(({ role, content }) => {
+      const safeRole = String(role || 'user').toUpperCase();
+      return `${safeRole}: ${String(content || '')}`;
+    })
+    .join('\n\n');
+};
+
+const generateTextWithGemini = async ({ prompt, messages }) => {
+  if (!isGeminiEnabled()) {
+    throw new Error('Gemini disabled by GEMINI_ENABLED=false');
+  }
+
+  const modelCandidates = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS].filter(
+    (name, idx, arr) => arr.indexOf(name) === idx
+  );
+  const finalPrompt = buildGeminiPrompt({ prompt, messages });
+  const modelErrors = [];
+
+  for (const modelName of modelCandidates) {
+    const model = getGeminiModelClient(modelName);
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES; attempt += 1) {
+      try {
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+          generationConfig: {
+            temperature: 0.2
+          }
+        });
+
+        const text = result?.response?.text?.();
+        if (!text) {
+          throw new Error('Gemini response contained no text');
+        }
+
+        if (modelName !== GEMINI_MODEL) {
+          console.warn(`Gemini fallback model in use: ${modelName}`);
+        }
+
+        return text;
+      } catch (error) {
+        lastError = error;
+        const status = getErrorStatus(error);
+
+        if (isGeminiModelNotFoundError(error)) {
+          console.warn(`Gemini model unavailable: ${modelName}. Trying next Gemini model...`);
+          break;
+        }
+
+        if (status === 429) {
+          console.warn(`Gemini quota/rate limit on ${modelName}. Trying next Gemini model...`);
+          break;
+        }
+
+        if (TRANSIENT_STATUSES.has(status) && attempt < GEMINI_MAX_RETRIES) {
+          const retryAfterDelay = parseRetryAfterMs(error);
+          const retryTextDelay = parseRetryDelayFromMessage(error);
+          const exponentialDelay = GEMINI_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+          const jitter = Math.floor(Math.random() * 300);
+          const delay = Math.max(retryAfterDelay || 0, retryTextDelay || 0, exponentialDelay + jitter);
+
+          console.warn(
+            `Gemini transient error on ${modelName} (status ${status || 'unknown'}) attempt ${attempt}/${GEMINI_MAX_RETRIES}. Retrying in ${delay}ms...`
+          );
+          await sleep(delay);
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    modelErrors.push(`${modelName}: ${lastError?.message || 'unknown error'}`);
+  }
+
+  throw new Error(`Gemini request failed. ${modelErrors.join(' | ')}`);
+};
+
+const generateTextWithGroq = async ({ prompt, messages }) => {
   if (!isGroqEnabled()) {
     throw new Error('Groq disabled by GROQ_ENABLED=false');
   }
@@ -275,8 +413,51 @@ const generateText = async ({ prompt, messages }) => {
   throw lastError || new Error('Groq request failed');
 };
 
-const getConversationResponse = async (transcript, memoryContext, elderName) => {
-  const messages = buildConversationMessages(transcript, memoryContext, elderName);
+const generateText = async ({ prompt, messages }) => {
+  const strategies = {
+    gemini: ['gemini', 'groq'],
+    groq: ['groq', 'gemini'],
+    auto: ['gemini', 'groq']
+  };
+
+  const providerOrder = strategies[LLM_PROVIDER] || strategies.gemini;
+  const errors = [];
+
+  for (const provider of providerOrder) {
+    try {
+      if (provider === 'gemini') {
+        return await generateTextWithGemini({ prompt, messages });
+      }
+
+      if (provider === 'groq') {
+        return await generateTextWithGroq({ prompt, messages });
+      }
+    } catch (error) {
+      const msg = error?.message || String(error);
+      errors.push(`${provider}: ${msg}`);
+      console.warn(`LLM provider ${provider} failed: ${msg}`);
+    }
+  }
+
+  throw new Error(`All LLM providers failed. ${errors.join(' | ')}`);
+};
+
+const getConversationResponse = async ({
+  transcript,
+  memoryContext,
+  elderName,
+  elderProfile,
+  baseSystemPrompt,
+  dynamicPromptState
+}) => {
+  const messages = buildConversationMessages({
+    transcript,
+    memoryContext,
+    elderName,
+    elderProfile,
+    baseSystemPrompt,
+    dynamicPromptState
+  });
   const raw = await generateText({ messages });
 
   const fallback = {
@@ -287,7 +468,8 @@ const getConversationResponse = async (transcript, memoryContext, elderName) => 
     memory_worthy: true,
     follow_up_for_next_call: [],
     end_call: false,
-    alert_family: false
+    alert_family: false,
+    dynamic_prompt_state: String(dynamicPromptState || baseSystemPrompt || '').trim()
   };
 
   return parseConversationResponse(raw, fallback);
@@ -314,7 +496,7 @@ const summarizeCall = async (transcript, elderName, callDate) => {
     const raw = await generateText({ prompt });
     return parseSummaryResponse(raw, fallback);
   } catch (error) {
-    console.error('Groq summarizeCall failed, using fallback summary:', error?.message || error);
+    console.error('LLM summarizeCall failed, using fallback summary:', error?.message || error);
     return fallback;
   }
 };
@@ -324,7 +506,7 @@ const generateDistressAlert = async (elderName, familyName, summary, moodTrend) 
   try {
     return await generateText({ prompt });
   } catch (error) {
-    console.error('Groq distress alert generation failed, using fallback text:', error?.message || error);
+    console.error('LLM distress alert generation failed, using fallback text:', error?.message || error);
     return `${familyName} ji, ${elderName} ki aaj ki baat-cheet mein thodi pareshani ke sanket mile. Kripya unse jaldi baat karke unki haal-chaal lein.`;
   }
 };
@@ -334,7 +516,7 @@ const generateWeeklySummary = async (elderName, familyName, sevenDaySummaries) =
   try {
     return await generateText({ prompt });
   } catch (error) {
-    console.error('Groq weekly summary generation failed, using fallback text:', error?.message || error);
+    console.error('LLM weekly summary generation failed, using fallback text:', error?.message || error);
     return `${familyName} ji, is hafte ${elderName} ke routine mein samanaya sthirta rahi. Detailed AI summary filhal uplabdh nahi hai, lekin daily check-ins continue rakhein.`;
   }
 };

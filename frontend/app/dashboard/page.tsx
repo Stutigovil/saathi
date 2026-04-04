@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { formatDistanceToNow } from 'date-fns';
 import Sidebar from '@/components/layout/Sidebar';
+import Navbar from '@/components/layout/Navbar';
+import AuthGuard from '@/components/auth/AuthGuard';
 import ElderCard from '@/components/ui/ElderCard';
 import MoodChart from '@/components/ui/MoodChart';
 import DistressAlert from '@/components/ui/DistressAlert';
@@ -18,6 +20,9 @@ export default function DashboardPage() {
   const [showAlert, setShowAlert] = useState(false);
   const [pulse, setPulse] = useState(0);
   const [triggeringCall, setTriggeringCall] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState('18:00');
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleMessage, setScheduleMessage] = useState('');
 
   useEffect(() => {
     api.getElders().then((data) => {
@@ -60,6 +65,23 @@ export default function DashboardPage() {
   const latestCall = dashboard?.last_calls?.[0];
   const latestMemory = dashboard?.memories?.[0];
 
+  const toMinutes = (hhmm: string) => {
+    const match = String(hhmm || '').match(/^(\d{2}):(\d{2})$/);
+    if (!match) return null;
+    return Number(match[1]) * 60 + Number(match[2]);
+  };
+
+  const minutesToHHMM = (value: number) => {
+    const normalized = ((value % 1440) + 1440) % 1440;
+    const h = Math.floor(normalized / 60);
+    const m = normalized % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    setScheduleTime(selectedElder?.schedule_time || '18:00');
+  }, [selectedElder?._id, selectedElder?.schedule_time]);
+
   const moodDelta = useMemo(() => {
     if (!dashboard?.memories || dashboard.memories.length < 2) return null;
     return Number((Number(dashboard.memories[0]?.mood_score || 0) - Number(dashboard.memories[1]?.mood_score || 0)).toFixed(1));
@@ -69,14 +91,37 @@ export default function DashboardPage() {
     if (!chartData.length) {
       return { low: null as null | number, high: null as null | number };
     }
-    const scores = chartData.map((item) => item.score);
+    const scores = chartData.map((item: any) => item.score);
     return {
       low: Math.min(...scores),
       high: Math.max(...scores)
     };
   }, [chartData]);
 
-  const nextCallText = selectedElder?.schedule_time ? `Daily at ${selectedElder.schedule_time}` : 'Schedule not set';
+  const recentCalls = dashboard?.last_calls || [];
+  const latestPrimaryNoAnswer = recentCalls.find(
+    (call: any) => String(call?.vapi_call_id || '').startsWith('scheduled-primary-') && call?.status === 'no_answer'
+  );
+  const hasRetryAttempt = recentCalls.some((call: any) =>
+    String(call?.vapi_call_id || '').startsWith('scheduled-retry-')
+  );
+
+  const retryTime = useMemo(() => {
+    if (!latestPrimaryNoAnswer || hasRetryAttempt) return null;
+    const baseMinutes = toMinutes(selectedElder?.schedule_time || '');
+    if (baseMinutes === null) return null;
+    return minutesToHHMM(baseMinutes + 10);
+  }, [latestPrimaryNoAnswer, hasRetryAttempt, selectedElder?.schedule_time]);
+
+  const nextCallText = retryTime
+    ? `Retry at ${retryTime}`
+    : selectedElder?.schedule_time
+      ? `Daily at ${selectedElder.schedule_time}`
+      : 'Schedule not set';
+
+  const latestCallMetaText = latestCall?.status === 'no_answer'
+    ? 'Call not answered'
+    : `Duration: ${Math.max(1, Math.round((latestCall?.duration_seconds || 0) / 60))} min · ${latestMemory?.mood_score ? '😊' : '—'}`;
 
   const triggerCall = async () => {
     if (!selectedElderId) return;
@@ -91,8 +136,32 @@ export default function DashboardPage() {
     }
   };
 
+  const saveSchedule = async () => {
+    if (!selectedElderId) return;
+    setSavingSchedule(true);
+    setScheduleMessage('');
+    try {
+      await api.updateElderSchedule(selectedElderId, { schedule_time: scheduleTime });
+      const [nextDashboard, nextElders] = await Promise.all([
+        api.getElderDashboard(selectedElderId),
+        api.getElders()
+      ]);
+      setDashboard(nextDashboard);
+      setElders(nextElders);
+      setPulse((p) => p + 1);
+      setScheduleMessage('Schedule updated.');
+    } catch (error) {
+      setScheduleMessage(error instanceof Error ? error.message : 'Failed to update schedule');
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
   return (
-    <main className="flex min-h-screen bg-background">
+    <AuthGuard>
+      <div className="min-h-screen bg-background">
+      <Navbar />
+      <main className="flex min-h-[calc(100vh-73px)] bg-background">
       <Sidebar elder={selectedElder} onTriggerCall={triggerCall} />
 
       <section className="flex-1 p-6 lg:p-8">
@@ -105,6 +174,14 @@ export default function DashboardPage() {
             <Link href="/onboard" className="rounded-xl border border-border px-4 py-2 text-sm hover:border-accent">
               + Add Elder
             </Link>
+            {selectedElderId ? (
+              <Link
+                href={`/dashboard/${selectedElderId}#voice-cloning`}
+                className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 hover:border-emerald-400"
+              >
+                Open Voice Cloning
+              </Link>
+            ) : null}
             <select
               value={selectedElderId}
               onChange={(e) => setSelectedElderId(e.target.value)}
@@ -135,8 +212,8 @@ export default function DashboardPage() {
                 ? new Date(latestCall.created_at).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
                 : 'No call yet'}
             </p>
-            <p className="mt-1 text-sm text-gray-300">
-              Duration: {Math.max(1, Math.round((latestCall?.duration_seconds || 0) / 60))} min · {latestMemory?.mood_score ? '😊' : '—'}
+            <p className={`mt-1 text-sm ${latestCall?.status === 'no_answer' ? 'text-amber-300' : 'text-gray-300'}`}>
+              {latestCallMetaText}
             </p>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
@@ -149,7 +226,13 @@ export default function DashboardPage() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
             <p className="text-sm text-gray-400">Next Call</p>
             <p className="mt-1 text-xl font-semibold text-white">{nextCallText}</p>
-            <p className="mt-1 text-sm text-gray-300">{selectedElder?.is_active ? 'Active schedule' : 'Paused'}</p>
+            <p className="mt-1 text-sm text-gray-300">
+              {retryTime
+                ? 'Auto-retry after missed call'
+                : selectedElder?.is_active
+                  ? 'Active schedule'
+                  : 'Paused'}
+            </p>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="soft-card bg-gradient-to-br from-card to-card/80 p-4">
             <p className="text-sm text-gray-400">Safety & Alerts</p>
@@ -245,6 +328,25 @@ export default function DashboardPage() {
             <div className="soft-card p-5">
               <h3 className="text-base font-semibold">Quick Actions</h3>
               <div className="mt-4 space-y-2">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">Daily Schedule (IST)</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      className="flex-1 rounded-lg border border-border bg-card px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={saveSchedule}
+                      disabled={savingSchedule || !selectedElderId}
+                      className="rounded-lg border border-border px-3 py-2 text-sm text-gray-200 hover:border-accent disabled:opacity-60"
+                    >
+                      {savingSchedule ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                  {scheduleMessage ? <p className="mt-2 text-xs text-gray-400">{scheduleMessage}</p> : null}
+                </div>
                 <button
                   onClick={triggerCall}
                   disabled={triggeringCall || !selectedElderId}
@@ -275,6 +377,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
-    </main>
+      </main>
+      </div>
+    </AuthGuard>
   );
 }
