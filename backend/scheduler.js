@@ -8,11 +8,13 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 const { connectDB } = require('./config/db');
 const Elder = require('./models/Elder');
 const Call = require('./models/Call');
+const CallReminder = require('./models/CallReminder');
 const Memory = require('./models/Memory');
 const { getMemoryContext } = require('./services/memory.service');
 const { placeCall } = require('./services/twilio-voice.service');
 const { sendMissedCallAlert, sendWeeklySummary, sendNoPickupAlert } = require('./services/distress.service');
 const { generateWeeklySummary } = require('./services/gemini.service');
+const { buildBasePrompt } = require('./services/prompt-manager');
 
 const IST_TIMEZONE = 'Asia/Kolkata';
 const SCHEDULER_VERBOSE_LOGS = process.env.SCHEDULER_VERBOSE_LOGS !== 'false';
@@ -94,6 +96,93 @@ const createNoPickupMemory = async ({ elder, slotTagSuffix, scheduleTime }) => {
     call_quality: 'not_connected',
     created_at: new Date()
   });
+};
+
+const toReminderContextPrompt = ({ elder, memoryContext, reminder }) => {
+  const basePrompt = buildBasePrompt(elder, memoryContext);
+  const intentLabel = reminder.call_type === 'reminder' ? 'Reminder call' : 'Follow-up call';
+  const topic = String(reminder.context_topic || '').trim().slice(0, 180);
+  const notes = String(reminder.context_notes || '').trim().slice(0, 600);
+
+  return `${basePrompt}\n\n${intentLabel.toUpperCase()} CONTEXT:\n- Primary topic for this call: ${topic}\n- Extra context from family: ${notes || 'No extra notes provided.'}\n- In the first two turns, acknowledge this context naturally and ask one practical follow-up question related to it.`;
+};
+
+const runReminderCalls = async () => {
+  const now = new Date();
+  const dueReminders = await CallReminder.find({
+    status: 'pending',
+    scheduled_for: { $lte: now }
+  })
+    .sort({ scheduled_for: 1 })
+    .limit(25);
+
+  let triggered = 0;
+  let failed = 0;
+
+  for (const reminder of dueReminders) {
+    try {
+      const elder = await Elder.findOne({
+        _id: reminder.elder_id,
+        created_by: reminder.created_by,
+        is_active: true
+      });
+
+      if (!elder) {
+        reminder.status = 'failed';
+        reminder.error_message = 'Elder not found or inactive.';
+        reminder.processed_at = new Date();
+        reminder.updated_at = new Date();
+        await reminder.save();
+        failed += 1;
+        continue;
+      }
+
+      const memoryContext = await getMemoryContext(elder._id);
+      const baseSystemPrompt = toReminderContextPrompt({
+        elder,
+        memoryContext,
+        reminder
+      });
+
+      const twilioCall = await placeCall(elder);
+      const providerCallId = twilioCall.sid || `reminder-${Date.now()}-${elder._id}`;
+
+      const call = await Call.create({
+        elder_id: elder._id,
+        provider_call_id: providerCallId,
+        vapi_call_id: `reminder-${reminder._id}`,
+        started_at: new Date(),
+        status: 'calling',
+        attempt_number: 1,
+        transcript: '',
+        base_system_prompt: baseSystemPrompt,
+        exchange_count: 0,
+        armoriq_blocks: [],
+        family_alert_sent: false,
+        created_at: new Date()
+      });
+
+      reminder.status = 'triggered';
+      reminder.call_id = call._id;
+      reminder.provider_call_id = providerCallId;
+      reminder.error_message = '';
+      reminder.processed_at = new Date();
+      reminder.updated_at = new Date();
+      await reminder.save();
+      triggered += 1;
+    } catch (error) {
+      reminder.status = 'failed';
+      reminder.error_message = String(error?.message || error).slice(0, 500);
+      reminder.processed_at = new Date();
+      reminder.updated_at = new Date();
+      await reminder.save();
+      failed += 1;
+    }
+  }
+
+  if (SCHEDULER_VERBOSE_LOGS && (triggered > 0 || failed > 0)) {
+    console.info(`[scheduler] reminders: due=${dueReminders.length}, triggered=${triggered}, failed=${failed}`);
+  }
 };
 
 const placeScheduledCallAttempt = async ({ elder, attemptNumber, todayDateKey, scheduleTime }) => {
@@ -294,6 +383,7 @@ const bootstrapScheduler = async () => {
   };
 
   cron.schedule('* * * * *', runSafely('scheduleDailyCalls', scheduleDailyCalls), { timezone: IST_TIMEZONE });
+  cron.schedule('* * * * *', runSafely('runReminderCalls', runReminderCalls), { timezone: IST_TIMEZONE });
   cron.schedule('0 19 * * 0', runSafely('runWeeklySummary', runWeeklySummary), { timezone: IST_TIMEZONE });
   cron.schedule('0 * * * *', runSafely('runMissedCallChecker', runMissedCallChecker), { timezone: IST_TIMEZONE });
   cron.schedule('0 0 * * *', runSafely('runStatsUpdater', runStatsUpdater), { timezone: IST_TIMEZONE });

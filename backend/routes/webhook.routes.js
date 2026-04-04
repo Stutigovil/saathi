@@ -2,6 +2,7 @@ const express = require('express');
 const twilio = require('twilio');
  const crypto = require('crypto');
 const Call = require('../models/Call');
+const CallReminder = require('../models/CallReminder');
 const Elder = require('../models/Elder');
 const { mapTwilioStatusToCallStatus } = require('../services/twilio-voice.service');
 const { summarizeCall, getConversationResponse } = require('../services/gemini.service');
@@ -284,6 +285,27 @@ const finalizeCompletedCall = async (call, elder) => {
     call.family_alert_sent = true;
     call.family_alert_type = 'distress';
   }
+};
+
+const syncReminderStatusFromCall = async (call) => {
+  if (!call?._id) return;
+  const callTag = String(call.vapi_call_id || '');
+  if (!callTag.startsWith('reminder-')) return;
+
+  const terminalStatus = String(call.status || '').toLowerCase();
+  if (!['completed', 'no_answer', 'error'].includes(terminalStatus)) return;
+
+  const reminderStatus = terminalStatus === 'error' ? 'failed' : 'completed';
+
+  await CallReminder.findOneAndUpdate(
+    { call_id: call._id, status: 'triggered' },
+    {
+      status: reminderStatus,
+      processed_at: new Date(),
+      updated_at: new Date(),
+      error_message: terminalStatus === 'error' ? 'Call ended with error status.' : ''
+    }
+  );
 };
 
 router.post('/twilio/voice', async (req, res) => {
@@ -573,6 +595,7 @@ router.post('/twilio/status', async (req, res, next) => {
 
       if (call.status === 'no_answer') {
         await call.save();
+        await syncReminderStatusFromCall(call);
         return res.status(200).json({ acknowledged: true });
       }
 
@@ -581,6 +604,7 @@ router.post('/twilio/status', async (req, res, next) => {
     }
 
     await call.save();
+    await syncReminderStatusFromCall(call);
     return res.status(200).json({ acknowledged: true });
   } catch (error) {
     return next(error);
