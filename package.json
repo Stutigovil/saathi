@@ -10,7 +10,12 @@
     "dev:with-seed": "npm run seed && npm run dev",
     "scheduler": "cd backend && npm run scheduler",
     "prod:backend": "cd backend && NODE_ENV=production npm start",
-    "prod:backend:ngrok": "concurrently -n backend,ngrok -c cyan,green \"cd backend && NODE_ENV=production npm start\" \"ngrok start saathi\""
+    "prod:backend:ngrok": "concurrently -n backend,ngrok -c cyan,green \"cd backend && NODE_ENV=production npm start\" \"ngrok start saathi\"",
+    "prod:frontend:build": "cd frontend && npm run build",
+    "prod:pm2:start": "pm2 start ecosystem.config.cjs",
+    "prod:pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "prod:pm2:logs": "pm2 logs",
+    "prod:pm2:save": "pm2 save"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

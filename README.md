@@ -218,6 +218,165 @@ This starts:
 - Restrict CORS FRONTEND_URL
 - Store secrets in secure runtime config (not committed files)
 
+## Production Deploy (Single VPS, No Domain)
+
+This project can run on one Ubuntu VPS and be accessed with the server public IP.
+
+Assumptions:
+- Backend runs on internal port 5000
+- Frontend runs on internal port 3000
+- Nginx listens on port 80 and routes `/api` and `/webhook` to backend
+
+### 1) Install runtime dependencies
+
+```bash
+apt update && apt upgrade -y
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs nginx git
+npm install -g pm2
+```
+
+### 2) Clone and install
+
+```bash
+git clone <YOUR_GITHUB_REPO_URL> /var/www/saathi
+cd /var/www/saathi
+npm run install:all
+```
+
+### 3) Create production env files
+
+Backend (`/var/www/saathi/.env` or `/var/www/saathi/backend/.env`):
+- `PORT=5000`
+- `FRONTEND_URL=http://<VPS_PUBLIC_IP>`
+- `PUBLIC_BASE_URL=http://<VPS_PUBLIC_IP>`
+- plus MongoDB/Twilio/LLM credentials
+
+Frontend (`/var/www/saathi/frontend/.env.local`):
+- `NEXT_PUBLIC_API_URL=http://<VPS_PUBLIC_IP>`
+
+### 4) Build frontend
+
+```bash
+cd /var/www/saathi
+npm run prod:frontend:build
+```
+
+### 5) Start all apps with PM2
+
+```bash
+cd /var/www/saathi
+npm run prod:pm2:start
+npm run prod:pm2:save
+pm2 startup
+```
+
+PM2 app config is in `ecosystem.config.cjs` and starts:
+- `saathi-backend`
+- `saathi-scheduler`
+- `saathi-frontend`
+
+### 6) Configure Nginx reverse proxy
+
+Use the template in `deploy/nginx/saathi-ip.conf`:
+
+```bash
+cp /var/www/saathi/deploy/nginx/saathi-ip.conf /etc/nginx/sites-available/default
+nginx -t
+systemctl restart nginx
+```
+
+### 7) Verify
+
+```bash
+pm2 status
+curl http://127.0.0.1:5000/health
+curl http://<VPS_PUBLIC_IP>/health
+```
+
+Twilio webhook base URL should be:
+- `http://<VPS_PUBLIC_IP>/webhook/twilio/voice`
+
+## Redeploy After Code Changes
+
+Run all commands from your project root (`/root/saathi` in current setup).
+
+### A) Backend-only changes
+
+Use this when you edit files under `backend/` and there are no dependency changes:
+
+```bash
+cd /root/saathi
+pm2 restart saathi-backend saathi-scheduler
+pm2 save
+```
+
+If backend dependencies changed (`backend/package.json`):
+
+```bash
+cd /root/saathi
+npm --prefix backend install
+pm2 restart saathi-backend saathi-scheduler
+pm2 save
+```
+
+### B) Frontend-only changes
+
+Use this when you edit files under `frontend/`:
+
+```bash
+cd /root/saathi
+npm run prod:frontend:build
+pm2 restart saathi-frontend
+pm2 save
+```
+
+If frontend dependencies changed (`frontend/package.json`):
+
+```bash
+cd /root/saathi
+npm --prefix frontend install
+npm run prod:frontend:build
+pm2 restart saathi-frontend
+pm2 save
+```
+
+### C) Both frontend and backend changed
+
+```bash
+cd /root/saathi
+npm run install:all
+npm run prod:frontend:build
+pm2 restart ecosystem.config.cjs
+pm2 save
+```
+
+### D) Nginx config changed
+
+Use this only if you edited Nginx files such as `deploy/nginx/saathi-ip.conf`:
+
+```bash
+cp /root/saathi/deploy/nginx/saathi-ip.conf /etc/nginx/sites-available/default
+nginx -t
+systemctl restart nginx
+```
+
+### E) Quick health check after redeploy
+
+```bash
+pm2 status
+curl -sS http://127.0.0.1:5000/health
+curl -I -sS http://127.0.0.1/ | head -n 1
+```
+
+### F) Logs for troubleshooting
+
+```bash
+pm2 logs saathi-backend --lines 100
+pm2 logs saathi-scheduler --lines 100
+pm2 logs saathi-frontend --lines 100
+```
+
 ## Voice Cloning Guide
 
 Where in UI:

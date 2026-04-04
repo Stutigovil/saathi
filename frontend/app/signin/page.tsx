@@ -1,22 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, Suspense, useMemo, useState } from 'react';
+import { Suspense } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { auth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { Sun, ArrowRight, Eye, EyeOff, Mail, Lock, Heart } from 'lucide-react';
 
-export default function SignInPage() {
-  return (
-    <Suspense fallback={<main className="grid min-h-screen place-items-center bg-background text-white"><p className="text-sm text-muted">Loading…</p></main>}>
-      <SignInContent />
-    </Suspense>
-  );
-}
-
-function SignInContent() {
+function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = useMemo(() => searchParams.get('next') || '/dashboard', [searchParams]);
@@ -202,5 +195,21 @@ function SignInContent() {
         </motion.div>
       </div>
     </main>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="grid min-h-screen bg-background px-6 py-10 text-white">
+          <div className="mx-auto w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-glow-violet">
+            <p className="text-sm text-gray-300">Loading sign-in...</p>
+          </div>
+        </main>
+      }
+    >
+      <SignInForm />
+    </Suspense>
   );
 }
