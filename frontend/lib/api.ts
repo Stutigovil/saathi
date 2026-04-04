@@ -76,5 +76,18 @@ export const api = {
   triggerCall: (elderId: string) =>
     request<any>(`/api/calls/trigger/${elderId}`, {
       method: 'POST'
+    }),
+  getCallReminders: (elderId: string) => request<any[]>(`/api/calls/reminders/${elderId}`),
+  createCallReminder: (
+    elderId: string,
+    payload: { call_type: 'reminder' | 'followup'; scheduled_for: string; context_topic: string; context_notes?: string }
+  ) =>
+    request<{ message: string; reminder: any }>(`/api/calls/reminders/${elderId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  cancelCallReminder: (reminderId: string) =>
+    request<{ message: string; reminder: any }>(`/api/calls/reminders/${reminderId}/cancel`, {
+      method: 'PATCH'
     })
 };
