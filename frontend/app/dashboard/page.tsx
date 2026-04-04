@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { formatDistanceToNow } from 'date-fns';
 import Sidebar from '@/components/layout/Sidebar';
+import Navbar from '@/components/layout/Navbar';
+import AuthGuard from '@/components/auth/AuthGuard';
 import ElderCard from '@/components/ui/ElderCard';
 import MoodChart from '@/components/ui/MoodChart';
 import DistressAlert from '@/components/ui/DistressAlert';
@@ -92,7 +94,10 @@ export default function DashboardPage() {
   };
 
   return (
-    <main className="flex min-h-screen bg-background">
+    <AuthGuard>
+      <div className="min-h-screen bg-background">
+      <Navbar />
+      <main className="flex min-h-[calc(100vh-73px)] bg-background">
       <Sidebar elder={selectedElder} onTriggerCall={triggerCall} />
 
       <section className="flex-1 p-6 lg:p-8">
@@ -275,6 +280,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
-    </main>
+      </main>
+      </div>
+    </AuthGuard>
   );
 }

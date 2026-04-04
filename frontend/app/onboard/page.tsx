@@ -3,6 +3,7 @@
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import AuthGuard from '@/components/auth/AuthGuard';
 
 export default function OnboardPage() {
   const router = useRouter();
@@ -53,12 +54,18 @@ export default function OnboardPage() {
   };
 
   return (
-    <main className="mx-auto min-h-screen max-w-2xl px-6 py-10">
-      <h1 className="text-2xl font-semibold">Add New Elder</h1>
-      <p className="mb-6 text-sm text-gray-400">Create a new daily-call profile and connect family contacts.</p>
+    <AuthGuard>
+      <main className="mx-auto min-h-screen max-w-3xl px-6 py-10">
+      <h1 className="text-3xl font-semibold">Onboarding Setup</h1>
+      <p className="mb-6 text-sm text-gray-400">Create elder profile, set call schedule, and connect primary family contact.</p>
 
       <form onSubmit={submit} className="soft-card space-y-4 p-6">
         {errorMessage ? <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">{errorMessage}</p> : null}
+        <div className="mb-2 flex flex-wrap gap-2 text-xs text-gray-300">
+          <span className="rounded-full border border-border px-2 py-1">Step 1: Elder details</span>
+          <span className="rounded-full border border-border px-2 py-1">Step 2: Schedule</span>
+          <span className="rounded-full border border-border px-2 py-1">Step 3: Family contact</span>
+        </div>
         <div className="grid gap-4 md:grid-cols-2">
           <input required placeholder="Name" className="rounded-lg border border-border bg-background px-3 py-2" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <input required type="number" placeholder="Age" className="rounded-lg border border-border bg-background px-3 py-2" value={form.age} onChange={(e) => setForm({ ...form, age: Number(e.target.value) })} />
@@ -80,5 +87,6 @@ export default function OnboardPage() {
         </button>
       </form>
     </main>
+    </AuthGuard>
   );
 }

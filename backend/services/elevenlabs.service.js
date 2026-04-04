@@ -1,14 +1,39 @@
 const axios = require('axios');
+const https = require('https');
 
 const ELEVENLABS_COOLDOWN_MS = Number(process.env.ELEVENLABS_COOLDOWN_MS || 60 * 60 * 1000);
+const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5';
+const ELEVENLABS_OUTPUT_FORMAT = process.env.ELEVENLABS_OUTPUT_FORMAT || 'mp3_22050_32';
+const ELEVENLABS_OPTIMIZE_STREAMING_LATENCY = process.env.ELEVENLABS_OPTIMIZE_STREAMING_LATENCY;
+const ELEVENLABS_LANGUAGE_CODE = process.env.ELEVENLABS_LANGUAGE_CODE || 'hi';
+const ELEVENLABS_TEXT_NORMALIZATION = process.env.ELEVENLABS_TEXT_NORMALIZATION || 'auto';
+const ELEVENLABS_TIMEOUT_MS = Number(process.env.ELEVENLABS_TIMEOUT_MS || 9000);
+const ELEVENLABS_VOICE_STABILITY = Number(process.env.ELEVENLABS_VOICE_STABILITY || 0.5);
+const ELEVENLABS_VOICE_SIMILARITY = Number(process.env.ELEVENLABS_VOICE_SIMILARITY || 0.8);
+const ELEVENLABS_VOICE_STYLE = Number(process.env.ELEVENLABS_VOICE_STYLE || 0.1);
+const ELEVENLABS_VOICE_SPEED = Number(process.env.ELEVENLABS_VOICE_SPEED || 0.95);
+const ELEVENLABS_VOICE_USE_SPEAKER_BOOST = process.env.ELEVENLABS_VOICE_USE_SPEAKER_BOOST !== 'false';
 let elevenlabsBlockedUntil = 0;
+
+const clamp = (value, min, max, fallback) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+};
+
+const elevenlabsClient = axios.create({
+  baseURL: 'https://api.elevenlabs.io/v1',
+  timeout: ELEVENLABS_TIMEOUT_MS,
+  httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 20 })
+});
 
 const isBlocked = () => Date.now() < elevenlabsBlockedUntil;
 const isEnabled = () => process.env.ELEVENLABS_ENABLED === 'true';
 
 const synthesizeSpeech = async (
   text,
-  voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
+  voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL',
+  options = {}
 ) => {
   if (!isEnabled()) {
     console.warn('ElevenLabs disabled via ELEVENLABS_ENABLED.');
@@ -38,27 +63,49 @@ const synthesizeSpeech = async (
   }
 
   try {
-    const response = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+    const outputFormat = options.outputFormat || ELEVENLABS_OUTPUT_FORMAT;
+    const optimizeLatency =
+      options.optimizeStreamingLatency ?? ELEVENLABS_OPTIMIZE_STREAMING_LATENCY;
+
+    const query = new URLSearchParams();
+    if (outputFormat) query.set('output_format', outputFormat);
+    if (optimizeLatency !== undefined && optimizeLatency !== null && String(optimizeLatency).trim() !== '') {
+      query.set('optimize_streaming_latency', String(optimizeLatency));
+    }
+
+    const endpoint = `/text-to-speech/${voiceId}${query.toString() ? `?${query.toString()}` : ''}`;
+
+    const voiceSettings = {
+      stability: clamp(options.stability ?? ELEVENLABS_VOICE_STABILITY, 0, 1, 0.5),
+      similarity_boost: clamp(options.similarityBoost ?? ELEVENLABS_VOICE_SIMILARITY, 0, 1, 0.8),
+      style: clamp(options.style ?? ELEVENLABS_VOICE_STYLE, 0, 1, 0.1),
+      speed: clamp(options.speed ?? ELEVENLABS_VOICE_SPEED, 0.7, 1.2, 0.95),
+      use_speaker_boost: Boolean(
+        options.useSpeakerBoost !== undefined ? options.useSpeakerBoost : ELEVENLABS_VOICE_USE_SPEAKER_BOOST
+      )
+    };
+
+    const response = await elevenlabsClient.post(
+      endpoint,
       {
         text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: 0.4,
-          similarity_boost: 0.8
-        }
+        model_id: options.modelId || ELEVENLABS_MODEL_ID,
+        language_code: options.languageCode || ELEVENLABS_LANGUAGE_CODE,
+        apply_text_normalization: options.textNormalization || ELEVENLABS_TEXT_NORMALIZATION,
+        voice_settings: voiceSettings
       },
       {
         headers: {
           'xi-api-key': process.env.ELEVENLABS_API_KEY,
           'Content-Type': 'application/json'
         },
-        responseType: 'arraybuffer',
-        timeout: 20000
+        responseType: 'arraybuffer'
       }
     );
 
-    console.info(`ElevenLabs TTS generated (${response?.data?.byteLength || 0} bytes).`);
+    console.info(
+      `ElevenLabs TTS generated (${response?.data?.byteLength || 0} bytes, model=${options.modelId || ELEVENLABS_MODEL_ID}, lang=${options.languageCode || ELEVENLABS_LANGUAGE_CODE}, format=${outputFormat || 'default'}, latency_opt=${optimizeLatency ?? 'none'}, speed=${voiceSettings.speed}).`
+    );
 
     return {
       audioBuffer: Buffer.from(response.data),

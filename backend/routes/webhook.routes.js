@@ -7,6 +7,7 @@ const { mapTwilioStatusToCallStatus } = require('../services/twilio-voice.servic
 const { summarizeCall, getConversationResponse } = require('../services/gemini.service');
 const { saveMemory, getMemoryContext } = require('../services/memory.service');
 const { evaluateDistress, sendDistressAlert } = require('../services/distress.service');
+const { checkResponse, logBlock } = require('../services/armoriq.service');
 const { synthesizeSpeech } = require('../services/elevenlabs.service');
 const {
   ensureBasePrompt,
@@ -18,13 +19,20 @@ const router = express.Router();
 const { twiml: TwiML } = twilio;
 const ttsAudioCache = new Map();
 const TTS_CACHE_TTL_MS = 5 * 60 * 1000;
-const TTS_GENERATION_TIMEOUT_MS = Number(process.env.TTS_GENERATION_TIMEOUT_MS || 3500);
+const TTS_GENERATION_TIMEOUT_MS = Number(process.env.TTS_GENERATION_TIMEOUT_MS || 9000);
 const AI_REPLY_TIMEOUT_MS = Number(process.env.AI_REPLY_TIMEOUT_MS || 2500);
 const GROQ_MIN_REQUEST_GAP_MS = Number(process.env.GROQ_MIN_REQUEST_GAP_MS || 0);
 const MAX_CALL_TURNS = Number(process.env.MAX_CALL_TURNS || 6);
 const isElevenLabsEnabled = () => process.env.ELEVENLABS_ENABLED === 'true';
 const TWILIO_HINDI_VOICE = process.env.TWILIO_HINDI_VOICE || 'Polly.Aditi';
 const TWILIO_HINDI_LANGUAGE = process.env.TWILIO_HINDI_LANGUAGE || 'hi-IN';
+const TWILIO_SPEECH_MODEL = process.env.TWILIO_SPEECH_MODEL || 'experimental_conversations';
+const TWILIO_SPEECH_TIMEOUT_SECONDS = String(process.env.TWILIO_SPEECH_TIMEOUT_SECONDS || '2');
+const TWILIO_ACTION_ON_EMPTY_RESULT = process.env.TWILIO_ACTION_ON_EMPTY_RESULT !== 'false';
+const TWILIO_PROFANITY_FILTER = process.env.TWILIO_PROFANITY_FILTER !== 'false';
+const TWILIO_SPEECH_HINTS =
+  process.env.TWILIO_SPEECH_HINTS ||
+  'dard,chot,pair,sujan,bukhar,chakkar,kamjori,udaas,tension,saans,dawai,doctor,parivaar,beta,beti';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getPublicBaseUrl = () => {
@@ -38,6 +46,24 @@ const getHindiIntroText = (elderName) =>
 const getHindiClosingText = () => 'Aapki baat sunkar bahut achha laga. Main kal fir se call karungi. Dhanyavaad.';
 const buildGatherAction = (elderId, turn) =>
   `/webhook/twilio/gather?elderId=${encodeURIComponent(String(elderId || ''))}&turn=${encodeURIComponent(String(turn || 1))}`;
+
+const getGatherOptions = (elderId, turn, elder) => {
+  const hints = [TWILIO_SPEECH_HINTS, elder?.name, elder?.city]
+    .filter(Boolean)
+    .join(',');
+
+  return {
+    input: 'speech',
+    language: TWILIO_HINDI_LANGUAGE,
+    speechModel: TWILIO_SPEECH_MODEL,
+    speechTimeout: TWILIO_SPEECH_TIMEOUT_SECONDS,
+    actionOnEmptyResult: TWILIO_ACTION_ON_EMPTY_RESULT,
+    profanityFilter: TWILIO_PROFANITY_FILTER,
+    hints,
+    action: buildGatherAction(elderId, turn),
+    method: 'POST'
+  };
+};
 const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const sanitizeReplyForSpeech = (text, elderName) => {
   let output = String(text || '')
@@ -53,6 +79,95 @@ const sanitizeReplyForSpeech = (text, elderName) => {
   }
 
   return output.replace(/\s+/g, ' ').trim();
+};
+
+const isAwkwardInjuryQuestion = (text) => {
+  const normalized = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  const patterns = [
+    'chot lagne se aapko aaram',
+    'chot lagne ke baad aapko aaram',
+    'kya chot lagne se',
+    'kya aapko lagta hai ki chot lagne ke baad'
+  ];
+  return patterns.some((p) => normalized.includes(p));
+};
+
+const normalizeForRepeatCheck = (text) =>
+  String(text || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s?]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getRecentAssistantUtterances = (transcript, limit = 3) => {
+  const lines = String(transcript || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line.toLowerCase().startsWith('assistant:'))
+    .map((line) => line.replace(/^assistant:\s*/i, '').trim());
+
+  return lines.slice(-limit);
+};
+
+const tokenOverlapScore = (a, b) => {
+  const aTokens = new Set(normalizeForRepeatCheck(a).split(' ').filter((t) => t.length > 2));
+  const bTokens = new Set(normalizeForRepeatCheck(b).split(' ').filter((t) => t.length > 2));
+  if (!aTokens.size || !bTokens.size) return 0;
+  let shared = 0;
+  aTokens.forEach((token) => {
+    if (bTokens.has(token)) shared += 1;
+  });
+  return shared / Math.max(aTokens.size, bTokens.size);
+};
+
+const isRepeatedAssistantIntent = (candidate, recentUtterances) => {
+  const normalizedCandidate = normalizeForRepeatCheck(candidate);
+  if (!normalizedCandidate) return false;
+
+  return recentUtterances.some((previous) => {
+    const normalizedPrevious = normalizeForRepeatCheck(previous);
+    if (!normalizedPrevious) return false;
+
+    if (normalizedCandidate === normalizedPrevious) return true;
+
+    const bothQuestions = normalizedCandidate.includes('?') && normalizedPrevious.includes('?');
+    if (!bothQuestions) return false;
+
+    return tokenOverlapScore(normalizedCandidate, normalizedPrevious) >= 0.65;
+  });
+};
+
+const buildFreshFollowUp = (speech, turn) => {
+  const normalized = normalizeForRepeatCheck(speech);
+
+  const painFollowUps = [
+    'Samajh sakti hoon ji, takleef hui hogi. Abhi chalne mein kitni dikkat ho rahi hai?',
+    'Afsos hua sunke ji. Pair par sujan hai kya, ya sirf dard ho raha hai?',
+    'Theek hai ji, aap aaram se batayein. Dard subah se same hai ya badh gaya?'
+  ];
+
+  const lowMoodFollowUps = [
+    'Main samajh rahi hoon ji. Is waqt sabse zyada kis baat ka bojh lag raha hai?',
+    'Aap akeli nahi hain ji. Kya ghar mein abhi koi paas mein baitha hai?',
+    'Theek hai ji, main saath hoon. Aaj ek chhoti si cheez kya thi jisne thoda behtar feel karaya?'
+  ];
+
+  const neutralFollowUps = [
+    'Samajh gaya ji. Aaj din ka kaunsa hissa thoda heavy laga?',
+    'Theek hai ji, main dhyan se sun rahi hoon. Aap thoda aur detail mein batayengi?',
+    'Ji bilkul, aap aaram se batayein. Main yahin hoon sunne ke liye.'
+  ];
+
+  const bucket =
+    /dard|chot|pair|gir|sujan|bukhar|kamjor|thakan/.test(normalized)
+      ? painFollowUps
+      : /udaas|akela|tension|ghabra|pareshan|dar/.test(normalized)
+        ? lowMoodFollowUps
+        : neutralFollowUps;
+
+  return bucket[turn % bucket.length];
 };
 
 const cacheTtsAudio = async (text, voiceId) => {
@@ -93,6 +208,20 @@ const getCachedAudio = (token) => {
   return item;
 };
 
+const speakWithPreferredTts = async (target, text, { useElevenLabs, publicBase }) => {
+  if (useElevenLabs) {
+    const token = await cacheTtsAudio(text);
+    if (token) {
+      target.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(token)}`);
+      return true;
+    }
+    console.warn('ElevenLabs TTS unavailable, falling back to Twilio say.');
+  }
+
+  target.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, text);
+  return false;
+};
+
 router.post('/twilio/voice', async (req, res) => {
   try {
     const elderId = req.query.elderId || req.body.elderId;
@@ -103,27 +232,13 @@ router.post('/twilio/voice', async (req, res) => {
     console.info(`TTS mode: ${useElevenLabs ? 'elevenlabs' : 'twilio'} (publicBase=${publicBase ? 'set' : 'missing'})`);
     const vr = new TwiML.VoiceResponse();
 
-    const gather = vr.gather({
-      input: 'speech',
-      language: 'hi-IN',
-      speechTimeout: 'auto',
-      action: buildGatherAction(elderId, 1),
-      method: 'POST'
+    const gather = vr.gather(getGatherOptions(elderId, 1, elder));
+
+    await speakWithPreferredTts(gather, introText, { useElevenLabs, publicBase });
+    await speakWithPreferredTts(vr, 'Aapki awaaz theek se nahi aayi. Main dubara sunne ki koshish karti hoon.', {
+      useElevenLabs,
+      publicBase
     });
-
-    if (useElevenLabs) {
-      const introToken = await cacheTtsAudio(introText);
-      if (introToken) {
-        gather.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(introToken)}`);
-      } else {
-        console.warn('ElevenLabs intro TTS unavailable, falling back to Twilio say.');
-        gather.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, introText);
-      }
-    } else {
-      gather.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, introText);
-    }
-
-    vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, 'Aapki awaaz theek se nahi aayi. Main dubara sunne ki koshish karti hoon.');
     vr.redirect({ method: 'POST' }, buildGatherAction(elderId, 1));
 
     res.type('text/xml').send(vr.toString());
@@ -183,22 +298,21 @@ router.post('/twilio/gather', async (req, res) => {
     const turn = Math.max(1, Number(req.query.turn || 1));
     const nextTurn = turn + 1;
     const elder = elderId ? await Elder.findById(elderId).lean() : null;
+    const publicBase = getPublicBaseUrl();
+    const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
 
     const vr = new TwiML.VoiceResponse();
 
     if (!speech) {
       if (turn >= MAX_CALL_TURNS) {
-        vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, getHindiClosingText());
+        await speakWithPreferredTts(vr, getHindiClosingText(), { useElevenLabs, publicBase });
         vr.hangup();
       } else {
-        const regather = vr.gather({
-          input: 'speech',
-          language: 'hi-IN',
-          speechTimeout: 'auto',
-          action: buildGatherAction(elderId, nextTurn),
-          method: 'POST'
+        const regather = vr.gather(getGatherOptions(elderId, nextTurn, elder));
+        await speakWithPreferredTts(regather, 'Aapki awaaz theek se sunayi nahi di. Kripya phir se batayen, main sun rahi hoon.', {
+          useElevenLabs,
+          publicBase
         });
-        regather.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, 'Aapki awaaz theek se sunayi nahi di. Kripya phir se batayen, main sun rahi hoon.');
         vr.redirect({ method: 'POST' }, buildGatherAction(elderId, nextTurn));
       }
       return res.type('text/xml').send(vr.toString());
@@ -259,16 +373,52 @@ router.post('/twilio/gather', async (req, res) => {
       responseText = 'Yeh sunkar achha laga. Aaj ka sabse accha pal kaunsa raha, thoda aur bataiyega?';
     }
 
-    const safeResponseText = sanitizeReplyForSpeech(responseText, elder?.name).slice(0, 320);
+    let safeResponseText = sanitizeReplyForSpeech(responseText, elder?.name).slice(0, 320);
 
-    const publicBase = getPublicBaseUrl();
-    const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
+    if (isAwkwardInjuryQuestion(safeResponseText)) {
+      safeResponseText = 'Mujhe afsos hai ji, girne se takleef hui hogi. Abhi dard zyada hai ya thoda kam, aur chalne mein dikkat ho rahi hai kya?';
+    }
+    let finalResponseText = safeResponseText;
+
+    try {
+      const armoriqResult = await checkResponse(safeResponseText, elder, speech);
+      if (!armoriqResult.passed) {
+        finalResponseText = sanitizeReplyForSpeech(armoriqResult.safe_response, elder?.name).slice(0, 320);
+        console.warn(
+          `[ArmorIQ] Blocked by ${armoriqResult.rule_triggered} action=${armoriqResult.action} severity=${armoriqResult.severity}`
+        );
+
+        if (call && elderId) {
+          await logBlock(elderId, call?._id, {
+            rule_triggered: armoriqResult.rule_triggered,
+            severity: armoriqResult.severity,
+            original_intent: armoriqResult.original_intent,
+            action: armoriqResult.action,
+            safe_response: finalResponseText,
+            timestamp: new Date()
+          });
+        }
+
+        if (armoriqResult.action === 'ESCALATE' && call) {
+          call.distress_detected = true;
+        }
+      }
+    } catch (armoriqError) {
+      console.warn(`ArmorIQ check failed: ${armoriqError?.message || armoriqError}`);
+    }
+
+    const recentAssistantUtterances = getRecentAssistantUtterances(call?.transcript, 3);
+    if (isRepeatedAssistantIntent(finalResponseText, recentAssistantUtterances)) {
+      finalResponseText = buildFreshFollowUp(speech, turn);
+      console.warn('Detected repeated assistant question intent; switched to fresh contextual follow-up.');
+    }
+
     const shouldEndCall = turn >= MAX_CALL_TURNS;
 
     if (shouldEndCall) {
       if (useElevenLabs) {
         const [responseToken, closingToken] = await Promise.all([
-          cacheTtsAudio(safeResponseText),
+          cacheTtsAudio(finalResponseText),
           cacheTtsAudio(getHindiClosingText())
         ]);
 
@@ -276,7 +426,7 @@ router.post('/twilio/gather', async (req, res) => {
           vr.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(responseToken)}`);
         } else {
           console.warn('ElevenLabs response TTS unavailable, falling back to Twilio say.');
-          vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, safeResponseText);
+          vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, finalResponseText);
         }
 
         if (closingToken) {
@@ -286,25 +436,19 @@ router.post('/twilio/gather', async (req, res) => {
           vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, getHindiClosingText());
         }
       } else {
-        vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, safeResponseText);
+        vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, finalResponseText);
         vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, getHindiClosingText());
       }
       vr.hangup();
     } else {
-      const regather = vr.gather({
-        input: 'speech',
-        language: 'hi-IN',
-        speechTimeout: 'auto',
-        action: buildGatherAction(elderId, nextTurn),
-        method: 'POST'
-      });
-      regather.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, safeResponseText);
-      vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, 'Aap batate rahiye, main dhyan se sun rahi hoon.');
+      const regather = vr.gather(getGatherOptions(elderId, nextTurn, elder));
+      await speakWithPreferredTts(regather, finalResponseText, { useElevenLabs, publicBase });
+      await speakWithPreferredTts(vr, 'Aap batate rahiye, main dhyan se sun rahi hoon.', { useElevenLabs, publicBase });
       vr.redirect({ method: 'POST' }, buildGatherAction(elderId, nextTurn));
     }
 
     if (call) {
-      call.transcript = [call.transcript, `assistant: ${safeResponseText}`].filter(Boolean).join('\n');
+      call.transcript = [call.transcript, `assistant: ${finalResponseText}`].filter(Boolean).join('\n');
       call.exchange_count = Number(call.exchange_count || 0) + 1;
       await call.save();
     }

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import AuthGuard from '@/components/auth/AuthGuard';
+import Navbar from '@/components/layout/Navbar';
 import MemoryTimeline from '@/components/ui/MemoryTimeline';
 import ArmorIQLog from '@/components/ui/ArmorIQLog';
 import CallHistory from '@/components/ui/CallHistory';
@@ -90,7 +92,10 @@ export default function ElderDetailPage() {
   };
 
   return (
-    <main className="mx-auto min-h-screen max-w-6xl space-y-8 px-6 py-8">
+    <AuthGuard>
+      <div className="min-h-screen bg-background">
+      <Navbar />
+      <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
       <header>
         <h1 className="text-2xl font-semibold">{data?.elder?.name || 'Elder'} — Detail View</h1>
         <p className="text-sm text-gray-400">Memory timeline, safety interventions, and full call history</p>
@@ -138,6 +143,8 @@ export default function ElderDetailPage() {
         <h2 className="mb-3 text-lg font-semibold">Call History</h2>
         <CallHistory calls={data?.last_calls || []} />
       </section>
-    </main>
+      </main>
+      </div>
+    </AuthGuard>
   );
 }
