@@ -70,6 +70,11 @@ const sanitizeReplyForSpeech = (text, elderName) => {
     .replace(/\*\*/g, '')
     .replace(/`/g, '')
     .replace(/\{[\s\S]*\}/g, '')
+    .replace(/\barmor\s*iq\b/gi, '')
+    .replace(/\barmoriq\b/gi, '')
+    .replace(/\binternal (system|policy|guardrail)s?\b/gi, '')
+    .replace(/\bsafety (check|filter|policy)\b/gi, '')
+    .replace(/\brule\s*triggered\b/gi, '')
     .replace(/call analysis|transcript analysis|response text|distress score|mood score|topics mentioned/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -233,19 +238,28 @@ const finalizeCompletedCall = async (call, elder) => {
   if (!call || call.memory_id) return;
 
   const transcript = String(call.transcript || '').trim();
-  const summaryTranscript = transcript || `assistant: Namaskar ${elder?.name || 'ji'}. user: Aaj theek hoon.`;
+  if (!hasUserSpeech(transcript)) {
+    // Do not generate synthetic memories for cut/no-conversation calls.
+    return;
+  }
 
   let summary;
   try {
-    summary = await summarizeCall(summaryTranscript, elder?.name || 'Elder', new Date().toISOString());
+    summary = await summarizeCall(transcript, elder?.name || 'Elder', new Date().toISOString());
   } catch (error) {
     console.warn(`summarizeCall failed for ${call.provider_call_id}: ${error?.message || error}`);
+    const compactTranscript = transcript
+      .split('\n')
+      .map((line) => line.replace(/^assistant:\s*/i, '').replace(/^user:\s*/i, '').trim())
+      .filter(Boolean)
+      .slice(-6)
+      .join(' ')
+      .slice(0, 220);
+
     summary = {
-      summary: transcript
-        ? 'Call complete hua. Elder ne saamaanya roop se baat ki. Follow-up routine check-in rakhein.'
-        : 'Call connect hua, lekin conversation details limited rahi. Routine follow-up continue rakhein.',
-      mood_score: transcript ? 5 : 4,
-      mood_label: transcript ? 'neutral' : 'low',
+      summary: compactTranscript || 'Call completed with limited transcript available.',
+      mood_score: 5,
+      mood_label: 'neutral',
       key_topics: [],
       people_mentioned: [],
       health_mentions: [],
@@ -254,7 +268,7 @@ const finalizeCompletedCall = async (call, elder) => {
       distress_detected: false,
       distress_reason: '',
       call_duration_minutes: Math.max(1, Math.round(Number(call.duration_seconds || 0) / 60)),
-      call_quality: transcript ? 'good' : 'limited'
+      call_quality: 'limited'
     };
   }
 
@@ -358,7 +372,7 @@ router.post('/twilio/gather', async (req, res) => {
 
     if (!speech) {
       if (turn >= MAX_CALL_TURNS) {
-        await speakWithPreferredTts(vr, getHindiClosingText(), { useElevenLabs, publicBase });
+        await speakWithPreferredTts(vr, getHindiClosingText(), { useElevenLabs, publicBase, voiceId: elderVoiceId });
         vr.hangup();
       } else {
         const regather = vr.gather(getGatherOptions(elderId, nextTurn, elder));

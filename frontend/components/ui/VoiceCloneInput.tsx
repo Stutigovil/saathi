@@ -23,10 +23,12 @@ const blobToDataUrl = (blob: Blob) =>
 
 export default function VoiceCloneInput({ onAudioChange, disabled = false }: Props) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordStartedAtRef = useRef<number>(0);
   const chunksRef = useRef<BlobPart[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [recordSeconds, setRecordSeconds] = useState(0);
 
   useEffect(() => {
     return () => {
@@ -35,6 +37,15 @@ export default function VoiceCloneInput({ onAudioChange, disabled = false }: Pro
       }
     };
   }, [audioUrl]);
+
+  useEffect(() => {
+    if (!isRecording) return undefined;
+    const id = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - recordStartedAtRef.current) / 1000);
+      setRecordSeconds(Math.max(0, elapsed));
+    }, 200);
+    return () => clearInterval(id);
+  }, [isRecording]);
 
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -65,7 +76,10 @@ export default function VoiceCloneInput({ onAudioChange, disabled = false }: Pro
     try {
       setErrorMessage('');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+
+      const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      const supportedMime = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m));
+      const recorder = supportedMime ? new MediaRecorder(stream, { mimeType: supportedMime }) : new MediaRecorder(stream);
 
       chunksRef.current = [];
       recorder.ondataavailable = (event) => {
@@ -75,9 +89,20 @@ export default function VoiceCloneInput({ onAudioChange, disabled = false }: Pro
       };
 
       recorder.onstop = async () => {
+        const elapsed = Math.floor((Date.now() - recordStartedAtRef.current) / 1000);
+        setRecordSeconds(elapsed);
+
         const mimeType = recorder.mimeType || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: mimeType });
-        const fileName = `voice-sample-${Date.now()}.webm`;
+        const extension = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+        const fileName = `voice-sample-${Date.now()}.${extension}`;
+
+        if (elapsed < 6 || blob.size < 12000) {
+          setErrorMessage('Recording is too short. Please record at least 6-10 seconds in a quiet environment.');
+          onAudioChange(null);
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
 
         if (audioUrl) {
           URL.revokeObjectURL(audioUrl);
@@ -102,6 +127,8 @@ export default function VoiceCloneInput({ onAudioChange, disabled = false }: Pro
       };
 
       mediaRecorderRef.current = recorder;
+      recordStartedAtRef.current = Date.now();
+      setRecordSeconds(0);
       recorder.start();
       setIsRecording(true);
     } catch (error) {
@@ -123,12 +150,13 @@ export default function VoiceCloneInput({ onAudioChange, disabled = false }: Pro
     }
     setAudioUrl('');
     setErrorMessage('');
+    setRecordSeconds(0);
     onAudioChange(null);
   };
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-black/20 p-4">
-      <p className="text-sm text-gray-300">Upload an audio sample or record directly for voice cloning.</p>
+      <p className="text-sm text-gray-300">Upload an audio sample or record directly for voice cloning (recommended 10-30 seconds).</p>
 
       <div className="flex flex-wrap gap-2">
         <button
@@ -156,6 +184,8 @@ export default function VoiceCloneInput({ onAudioChange, disabled = false }: Pro
           Clear
         </button>
       </div>
+
+      {isRecording ? <p className="text-xs text-emerald-300">Recording: {recordSeconds}s</p> : null}
 
       <input
         type="file"

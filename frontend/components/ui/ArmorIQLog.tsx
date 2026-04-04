@@ -2,10 +2,11 @@
 
 const RULE_COLORS: Record<string, string> = {
   NO_MEDICAL_ADVICE: 'bg-blue-500/20 text-blue-300',
-  DISTRESS_ESCALATION: 'bg-red-500/20 text-red-300',
+  NO_FINANCIAL_ADVICE: 'bg-indigo-500/20 text-indigo-300',
   NO_PII_LEAKAGE: 'bg-amber-500/20 text-amber-300',
+  DISTRESS_ESCALATION: 'bg-red-500/20 text-red-300',
   HONEST_AI_DISCLOSURE: 'bg-purple-500/20 text-purple-300',
-  NO_FINANCIAL_ADVICE: 'bg-gray-500/20 text-gray-200'
+  UNKNOWN_RULE: 'bg-gray-500/20 text-gray-200'
 };
 
 type Props = {

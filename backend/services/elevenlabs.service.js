@@ -154,14 +154,33 @@ const cloneVoiceFromAudio = async ({ name, audioBuffer, fileName, mimeType }) =>
     contentType: String(mimeType || 'audio/webm')
   });
 
-  const response = await elevenlabsClient.post('/voices/add', form, {
-    headers: {
-      ...form.getHeaders(),
-      'xi-api-key': process.env.ELEVENLABS_API_KEY
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity
-  });
+  let response;
+  try {
+    response = await elevenlabsClient.post('/voices/add', form, {
+      headers: {
+        ...form.getHeaders(),
+        'xi-api-key': process.env.ELEVENLABS_API_KEY
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+  } catch (error) {
+    const status = Number(error?.response?.status || 502);
+    const detail = error?.response?.data?.detail;
+    const message =
+      (typeof detail === 'string' && detail) ||
+      detail?.message ||
+      detail?.error ||
+      error?.response?.data?.message ||
+      error?.message ||
+      'Voice cloning request failed.';
+
+    const wrapped = new Error(
+      `Voice cloning failed (${status}): ${message}. Please upload a clear 10-30 second sample (mp3/wav/m4a/webm).`
+    );
+    wrapped.statusCode = status;
+    throw wrapped;
+  }
 
   return {
     voice_id: response?.data?.voice_id,
