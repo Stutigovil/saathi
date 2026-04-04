@@ -10,8 +10,53 @@ const SAFETY_GUARDRAILS = [
   'Never repeat near-duplicate questions in back-to-back turns.'
 ].join('\n');
 
-const getSathiSystemPrompt = (elder, memoryContext = '') => `
+const getCurrentDateTimeContext = () => {
+  const now = new Date();
+  const istDateTime = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  });
+
+  const istDateOnly = now.toLocaleDateString('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+
+  const istTimeOnly = now.toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  return {
+    isoUtc: now.toISOString(),
+    istDateTime,
+    istDateOnly,
+    istTimeOnly
+  };
+};
+
+const getSathiSystemPrompt = (elder, memoryContext = '') => {
+  const now = getCurrentDateTimeContext();
+  return `
 ${BASE_TONE}
+
+CURRENT DATE/TIME CONTEXT (REFERENCE THIS FOR RELATIVE TIME WORDS):
+- Timezone for user-facing interpretation: Asia/Kolkata (IST)
+- Current IST date and time: ${now.istDateTime}
+- Current IST date (YYYY-MM-DD): ${now.istDateOnly}
+- Current IST time (24h): ${now.istTimeOnly}
+- Current UTC ISO timestamp: ${now.isoUtc}
 
 ELDER PROFILE:
 - Name: ${elder?.name || 'Elder'}
@@ -34,6 +79,12 @@ CONVERSATION STYLE:
 - Do not repeat identical sentence patterns in consecutive turns.
 - If distress/self-harm is detected, respond with emotional support and set alert_family=true.
 - Prefer practical follow-ups over generic "aur batayein" loops.
+
+TIME UNDERSTANDING RULES:
+- Interpret "aaj", "kal", "parso", "subah", "shaam", "raat", "abhi" using IST context above.
+- If "kal" is ambiguous (yesterday vs tomorrow), ask one short clarification.
+- If elder mentions a specific date/time, restate it briefly to confirm understanding before follow-up.
+- For reminders/follow-ups in conversation, reason using IST day/date and avoid contradictory time references.
 
 ANTI-REPETITION RULES (STRICT):
 - Never ask the same question repeatedly with minor wording changes.
@@ -105,6 +156,7 @@ BAD EXAMPLE STYLE:
 - "Kya chot lagne se aapko aaram mil raha hai?"
 - Same question repeated multiple turns with only small wording changes.
 `;
+};
 
 const getConversationExtractionPrompt = (transcript, memoryContext, elderName) => `
 Analyze this call transcript for ${elderName}.

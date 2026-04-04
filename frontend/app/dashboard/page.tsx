@@ -235,6 +235,15 @@ export default function DashboardPage() {
                     Voice Clone
                   </Link>
                 )}
+                {selectedElderId && (
+                  <Link
+                    href={`/dashboard/${selectedElderId}#reminder-calls`}
+                    className="btn-ghost flex items-center gap-1.5 text-sm text-accent hover:text-accent/80"
+                  >
+                    <Calendar className="h-4 w-4" />
+                    Schedule Reminder
+                  </Link>
+                )}
                 <select
                   value={selectedElderId}
                   onChange={(e) => setSelectedElderId(e.target.value)}

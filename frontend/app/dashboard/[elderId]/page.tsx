@@ -226,17 +226,25 @@ export default function ElderDetailPage() {
       <section className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-emerald-200">Looking for voice upload?</p>
+            <p className="text-sm font-semibold text-emerald-200">Manage voice and special reminder calls</p>
             <p className="text-xs text-emerald-100/90">
-              Use the Voice Cloning section below to record/upload audio and clone voice.
+              Use quick links to jump to Voice Cloning and Reminder/Follow-up scheduling.
             </p>
           </div>
-          <Link
-            href="#voice-cloning"
-            className="rounded-lg border border-emerald-300/40 bg-emerald-500/20 px-3 py-2 text-sm text-emerald-100"
-          >
-            Jump to Voice Cloning
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="#voice-cloning"
+              className="rounded-lg border border-emerald-300/40 bg-emerald-500/20 px-3 py-2 text-sm text-emerald-100"
+            >
+              Jump to Voice Cloning
+            </Link>
+            <Link
+              href="#reminder-calls"
+              className="rounded-lg border border-emerald-300/40 bg-emerald-500/20 px-3 py-2 text-sm text-emerald-100"
+            >
+              Jump to Reminder Calls
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -303,7 +311,7 @@ export default function ElderDetailPage() {
         <VoiceCloneInput onAudioChange={setCloneAudio} disabled={voiceSaving} />
       </section>
 
-      <section className="soft-card space-y-4 p-5">
+      <section id="reminder-calls" className="soft-card space-y-4 p-5">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">Reminder or Follow-up Calls</h2>
           <button
