@@ -7,9 +7,11 @@ const buildBasePrompt = (elder, memoryContext) => {
 };
 
 const getEffectiveSystemPrompt = ({ basePrompt, dynamicPromptState }) => {
+  const base = String(basePrompt || '').trim();
   const dynamic = String(dynamicPromptState || '').trim();
-  if (dynamic) return dynamic;
-  return String(basePrompt || '').trim();
+  if (!dynamic) return base;
+
+  return `${base}\n\nNEXT TURN CONTINUITY HINT (SHORT, INTERNAL):\n${dynamic}`.trim();
 };
 
 const sanitizeDynamicPromptState = (value) => {

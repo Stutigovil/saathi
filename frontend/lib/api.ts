@@ -1,6 +1,21 @@
 import { auth } from '@/lib/auth';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const resolveApiUrl = () => {
+  const configured = String(process.env.NEXT_PUBLIC_API_URL || '').trim();
+
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      return parsed.toString().replace(/\/$/, '');
+    } catch {
+      throw new Error('Invalid NEXT_PUBLIC_API_URL. Use an absolute URL like http://localhost:5000');
+    }
+  }
+
+  return 'http://localhost:5000';
+};
+
+const API_URL = resolveApiUrl();
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = auth.getToken();
@@ -16,6 +31,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const raw = await response.text();
+
+    if (response.status === 404 && /<!doctype html>/i.test(raw)) {
+      throw new Error(
+        `API route not found at ${API_URL}${path}. Set NEXT_PUBLIC_API_URL to your backend URL and restart frontend.`
+      );
+    }
+
     let message = raw;
     try {
       const parsed = JSON.parse(raw);
@@ -76,5 +98,18 @@ export const api = {
   triggerCall: (elderId: string) =>
     request<any>(`/api/calls/trigger/${elderId}`, {
       method: 'POST'
+    }),
+  getCallReminders: (elderId: string) => request<any[]>(`/api/calls/reminders/${elderId}`),
+  createCallReminder: (
+    elderId: string,
+    payload: { call_type: 'reminder' | 'followup'; scheduled_for: string; context_topic: string; context_notes?: string }
+  ) =>
+    request<{ message: string; reminder: any }>(`/api/calls/reminders/${elderId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  cancelCallReminder: (reminderId: string) =>
+    request<{ message: string; reminder: any }>(`/api/calls/reminders/${reminderId}/cancel`, {
+      method: 'PATCH'
     })
 };
