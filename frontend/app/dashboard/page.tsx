@@ -174,6 +174,14 @@ export default function DashboardPage() {
             <Link href="/onboard" className="rounded-xl border border-border px-4 py-2 text-sm hover:border-accent">
               + Add Elder
             </Link>
+            {selectedElderId ? (
+              <Link
+                href={`/dashboard/${selectedElderId}#voice-cloning`}
+                className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 hover:border-emerald-400"
+              >
+                Open Voice Cloning
+              </Link>
+            ) : null}
             <select
               value={selectedElderId}
               onChange={(e) => setSelectedElderId(e.target.value)}

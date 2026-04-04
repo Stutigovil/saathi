@@ -28,7 +28,7 @@ app.use(
 
 app.use(
   express.json({
-    limit: '2mb',
+    limit: process.env.JSON_BODY_LIMIT || '15mb',
     verify: (req, _res, buf) => {
       req.rawBody = buf.toString('utf8');
     }

@@ -208,9 +208,9 @@ const getCachedAudio = (token) => {
   return item;
 };
 
-const speakWithPreferredTts = async (target, text, { useElevenLabs, publicBase }) => {
+const speakWithPreferredTts = async (target, text, { useElevenLabs, publicBase, voiceId }) => {
   if (useElevenLabs) {
-    const token = await cacheTtsAudio(text);
+    const token = await cacheTtsAudio(text, voiceId);
     if (token) {
       target.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(token)}`);
       return true;
@@ -279,15 +279,17 @@ router.post('/twilio/voice', async (req, res) => {
     const introText = getHindiIntroText(elder?.name);
     const publicBase = getPublicBaseUrl();
     const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
+    const elderVoiceId = elder?.voice_id || process.env.ELEVENLABS_VOICE_ID;
     console.info(`TTS mode: ${useElevenLabs ? 'elevenlabs' : 'twilio'} (publicBase=${publicBase ? 'set' : 'missing'})`);
     const vr = new TwiML.VoiceResponse();
 
     const gather = vr.gather(getGatherOptions(elderId, 1, elder));
 
-    await speakWithPreferredTts(gather, introText, { useElevenLabs, publicBase });
+    await speakWithPreferredTts(gather, introText, { useElevenLabs, publicBase, voiceId: elderVoiceId });
     await speakWithPreferredTts(vr, 'Aapki awaaz theek se nahi aayi. Main dubara sunne ki koshish karti hoon.', {
       useElevenLabs,
-      publicBase
+      publicBase,
+      voiceId: elderVoiceId
     });
     vr.redirect({ method: 'POST' }, buildGatherAction(elderId, 1));
 
@@ -325,7 +327,7 @@ router.get('/twilio/tts', async (req, res) => {
       text = getHindiClosingText();
     }
 
-    const tts = await synthesizeSpeech(text);
+    const tts = await synthesizeSpeech(text, elder?.voice_id || process.env.ELEVENLABS_VOICE_ID);
 
     if (!tts?.audioBuffer) {
       return res.status(404).send('TTS unavailable');
@@ -350,6 +352,7 @@ router.post('/twilio/gather', async (req, res) => {
     const elder = elderId ? await Elder.findById(elderId).lean() : null;
     const publicBase = getPublicBaseUrl();
     const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
+    const elderVoiceId = elder?.voice_id || process.env.ELEVENLABS_VOICE_ID;
 
     const vr = new TwiML.VoiceResponse();
 
@@ -361,7 +364,8 @@ router.post('/twilio/gather', async (req, res) => {
         const regather = vr.gather(getGatherOptions(elderId, nextTurn, elder));
         await speakWithPreferredTts(regather, 'Aapki awaaz theek se sunayi nahi di. Kripya phir se batayen, main sun rahi hoon.', {
           useElevenLabs,
-          publicBase
+          publicBase,
+          voiceId: elderVoiceId
         });
         vr.redirect({ method: 'POST' }, buildGatherAction(elderId, nextTurn));
       }
@@ -468,8 +472,8 @@ router.post('/twilio/gather', async (req, res) => {
     if (shouldEndCall) {
       if (useElevenLabs) {
         const [responseToken, closingToken] = await Promise.all([
-          cacheTtsAudio(finalResponseText),
-          cacheTtsAudio(getHindiClosingText())
+          cacheTtsAudio(finalResponseText, elderVoiceId),
+          cacheTtsAudio(getHindiClosingText(), elderVoiceId)
         ]);
 
         if (responseToken) {
@@ -492,8 +496,12 @@ router.post('/twilio/gather', async (req, res) => {
       vr.hangup();
     } else {
       const regather = vr.gather(getGatherOptions(elderId, nextTurn, elder));
-      await speakWithPreferredTts(regather, finalResponseText, { useElevenLabs, publicBase });
-      await speakWithPreferredTts(vr, 'Aap batate rahiye, main dhyan se sun rahi hoon.', { useElevenLabs, publicBase });
+      await speakWithPreferredTts(regather, finalResponseText, { useElevenLabs, publicBase, voiceId: elderVoiceId });
+      await speakWithPreferredTts(vr, 'Aap batate rahiye, main dhyan se sun rahi hoon.', {
+        useElevenLabs,
+        publicBase,
+        voiceId: elderVoiceId
+      });
       vr.redirect({ method: 'POST' }, buildGatherAction(elderId, nextTurn));
     }
 

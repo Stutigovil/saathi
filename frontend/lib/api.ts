@@ -61,6 +61,18 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
+  cloneElderVoice: (
+    elderId: string,
+    payload: { audio_base64: string; file_name: string; mime_type: string; voice_name?: string }
+  ) =>
+    request<any>(`/api/elders/${elderId}/voice-clone`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  resetElderVoice: (elderId: string) =>
+    request<any>(`/api/elders/${elderId}/voice-clone`, {
+      method: 'DELETE'
+    }),
   triggerCall: (elderId: string) =>
     request<any>(`/api/calls/trigger/${elderId}`, {
       method: 'POST'

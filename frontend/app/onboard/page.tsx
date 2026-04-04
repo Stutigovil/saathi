@@ -4,11 +4,14 @@ import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import AuthGuard from '@/components/auth/AuthGuard';
+import VoiceCloneInput, { VoiceCloneAudioPayload } from '@/components/ui/VoiceCloneInput';
 
 export default function OnboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [voiceName, setVoiceName] = useState('');
+  const [cloneAudio, setCloneAudio] = useState<VoiceCloneAudioPayload | null>(null);
   const [form, setForm] = useState({
     name: '',
     age: 70,
@@ -26,7 +29,7 @@ export default function OnboardPage() {
     setLoading(true);
     setErrorMessage('');
     try {
-      await api.createElder({
+      const elder = await api.createElder({
         name: form.name.trim(),
         age: Number(form.age),
         phone: form.phone.trim(),
@@ -45,6 +48,16 @@ export default function OnboardPage() {
           }
         ]
       });
+
+      if (cloneAudio?.audioBase64 && elder?._id) {
+        await api.cloneElderVoice(elder._id, {
+          audio_base64: cloneAudio.audioBase64,
+          file_name: cloneAudio.fileName,
+          mime_type: cloneAudio.mimeType,
+          voice_name: voiceName.trim() || `${form.name.trim()} Voice`
+        });
+      }
+
       router.push('/dashboard');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save elder. Please try again.');
@@ -65,6 +78,7 @@ export default function OnboardPage() {
           <span className="rounded-full border border-border px-2 py-1">Step 1: Elder details</span>
           <span className="rounded-full border border-border px-2 py-1">Step 2: Schedule</span>
           <span className="rounded-full border border-border px-2 py-1">Step 3: Family contact</span>
+          <span className="rounded-full border border-border px-2 py-1">Step 4: Voice clone (optional)</span>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <input required placeholder="Name" className="rounded-lg border border-border bg-background px-3 py-2" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -81,6 +95,18 @@ export default function OnboardPage() {
           <input required placeholder="Phone" className="rounded-lg border border-border bg-background px-3 py-2" value={form.family_phone} onChange={(e) => setForm({ ...form, family_phone: e.target.value })} />
           <input required placeholder="WhatsApp" className="rounded-lg border border-border bg-background px-3 py-2 md:col-span-2" value={form.family_whatsapp} onChange={(e) => setForm({ ...form, family_whatsapp: e.target.value })} />
         </div>
+
+        <h2 className="pt-2 text-sm font-semibold text-gray-200">Voice Cloning (Optional)</h2>
+        <input
+          placeholder="Custom voice name (e.g. Nani Voice)"
+          className="w-full rounded-lg border border-border bg-background px-3 py-2"
+          value={voiceName}
+          onChange={(e) => setVoiceName(e.target.value)}
+        />
+        <VoiceCloneInput onAudioChange={setCloneAudio} disabled={loading} />
+        <p className="text-xs text-gray-400">
+          If no sample is provided, Saathi uses default voice from env (Monika voice id).
+        </p>
 
         <button disabled={loading} className="w-full rounded-xl bg-accent px-4 py-3 font-medium text-white shadow-glow-violet disabled:opacity-60">
           {loading ? 'Saving...' : 'Save Elder'}

@@ -1,5 +1,6 @@
 const axios = require('axios');
 const https = require('https');
+const FormData = require('form-data');
 
 const ELEVENLABS_COOLDOWN_MS = Number(process.env.ELEVENLABS_COOLDOWN_MS || 60 * 60 * 1000);
 const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5';
@@ -30,9 +31,13 @@ const elevenlabsClient = axios.create({
 const isBlocked = () => Date.now() < elevenlabsBlockedUntil;
 const isEnabled = () => process.env.ELEVENLABS_ENABLED === 'true';
 
+const getDefaultVoiceId = () => process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
+
+const resolveVoiceId = (voiceId) => String(voiceId || getDefaultVoiceId()).trim();
+
 const synthesizeSpeech = async (
   text,
-  voiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL',
+  voiceId = getDefaultVoiceId(),
   options = {}
 ) => {
   if (!isEnabled()) {
@@ -73,7 +78,7 @@ const synthesizeSpeech = async (
       query.set('optimize_streaming_latency', String(optimizeLatency));
     }
 
-    const endpoint = `/text-to-speech/${voiceId}${query.toString() ? `?${query.toString()}` : ''}`;
+    const endpoint = `/text-to-speech/${resolveVoiceId(voiceId)}${query.toString() ? `?${query.toString()}` : ''}`;
 
     const voiceSettings = {
       stability: clamp(options.stability ?? ELEVENLABS_VOICE_STABILITY, 0, 1, 0.5),
@@ -129,6 +134,43 @@ const synthesizeSpeech = async (
   }
 };
 
+const cloneVoiceFromAudio = async ({ name, audioBuffer, fileName, mimeType }) => {
+  if (!isEnabled()) {
+    throw new Error('ElevenLabs is disabled. Enable ELEVENLABS_ENABLED=true to clone voice.');
+  }
+
+  if (!process.env.ELEVENLABS_API_KEY) {
+    throw new Error('ElevenLabs API key missing.');
+  }
+
+  if (!audioBuffer || !Buffer.isBuffer(audioBuffer) || !audioBuffer.length) {
+    throw new Error('Valid audio buffer is required for voice cloning.');
+  }
+
+  const form = new FormData();
+  form.append('name', String(name || '').trim() || `Saathi Voice ${Date.now()}`);
+  form.append('files', audioBuffer, {
+    filename: String(fileName || `sample-${Date.now()}.webm`),
+    contentType: String(mimeType || 'audio/webm')
+  });
+
+  const response = await elevenlabsClient.post('/voices/add', form, {
+    headers: {
+      ...form.getHeaders(),
+      'xi-api-key': process.env.ELEVENLABS_API_KEY
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity
+  });
+
+  return {
+    voice_id: response?.data?.voice_id,
+    name: response?.data?.name || String(name || '').trim() || 'Custom Voice'
+  };
+};
+
 module.exports = {
-  synthesizeSpeech
+  synthesizeSpeech,
+  cloneVoiceFromAudio,
+  getDefaultVoiceId
 };
