@@ -8,7 +8,9 @@
     "dev": "concurrently -n backend,frontend,scheduler -c cyan,magenta,yellow \"cd backend && npm run dev\" \"cd frontend && npm run dev\" \"cd backend && npm run scheduler\"",
     "dev:clean": "node scripts/dev-clean.js",
     "dev:with-seed": "npm run seed && npm run dev",
-    "scheduler": "cd backend && npm run scheduler"
+    "scheduler": "cd backend && npm run scheduler",
+    "prod:backend": "cd backend && NODE_ENV=production npm start",
+    "prod:backend:ngrok": "concurrently -n backend,ngrok -c cyan,green \"cd backend && NODE_ENV=production npm start\" \"ngrok start saathi\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

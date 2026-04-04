@@ -11,6 +11,14 @@ const { requireAuth } = require('../middleware/auth.middleware');
 const router = express.Router();
 router.use(requireAuth);
 
+router.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'dashboard-routes',
+    timestamp: new Date().toISOString()
+  });
+});
+
 router.get('/elder/:id', async (req, res, next) => {
   try {
     const elderId = req.params.id;
