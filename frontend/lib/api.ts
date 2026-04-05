@@ -1,5 +1,21 @@
 import { auth } from '@/lib/auth';
 
+type FamilyProfile = {
+  member_name: string;
+  relationship_with_elder: string;
+  phone: string;
+  whatsapp: string;
+  platform_reason: string;
+};
+
+type PublicUser = {
+  id: string;
+  name: string;
+  email: string;
+  profile_completed?: boolean;
+  family_profile?: FamilyProfile;
+};
+
 const resolveApiUrl = () => {
   const configured = String(process.env.NEXT_PUBLIC_API_URL || '').trim();
 
@@ -52,17 +68,27 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  signUp: (payload: { name: string; email: string; password: string }) =>
-    request<{ token: string; user: { id: string; name: string; email: string } }>('/api/auth/signup', {
+  signUp: (payload: {
+    name: string;
+    email: string;
+    password: string;
+    family_profile?: FamilyProfile;
+  }) =>
+    request<{ token: string; user: PublicUser }>('/api/auth/signup', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
   signIn: (payload: { email: string; password: string }) =>
-    request<{ token: string; user: { id: string; name: string; email: string } }>('/api/auth/login', {
+    request<{ token: string; user: PublicUser }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  me: () => request<{ user: { id: string; name: string; email: string } }>('/api/auth/me'),
+  me: () => request<{ user: PublicUser }>('/api/auth/me'),
+  updateProfile: (payload: { name?: string; family_profile: FamilyProfile }) =>
+    request<{ user: PublicUser }>('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
   getElders: () => request<any[]>('/api/elders'),
   getElderDashboard: (id: string) => request<any>(`/api/dashboard/elder/${id}`),
   getMoodTrend: (id: string, days = 7) => request<any[]>(`/api/dashboard/mood-trend/${id}?days=${days}`),

@@ -151,7 +151,6 @@ const runReminderCalls = async () => {
         elder_id: elder._id,
         provider_call_id: providerCallId,
         vapi_call_id: `reminder-${reminder._id}`,
-        started_at: new Date(),
         status: 'calling',
         attempt_number: 1,
         transcript: '',
@@ -203,7 +202,6 @@ const placeScheduledCallAttempt = async ({ elder, attemptNumber, todayDateKey, s
     elder_id: elder._id,
     provider_call_id: providerCallId,
     vapi_call_id: scheduledTag,
-    started_at: new Date(),
     status: 'calling',
     attempt_number: attemptNumber,
     created_at: new Date()

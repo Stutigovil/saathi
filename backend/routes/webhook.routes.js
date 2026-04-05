@@ -235,6 +235,38 @@ const isExplicitNoPickupStatus = (twilioStatus) => {
   return ['busy', 'no-answer', 'canceled', 'failed'].includes(status);
 };
 
+const isReminderTriggeredCall = (call) => String(call?.vapi_call_id || '').startsWith('reminder-');
+
+const finalizeMissedCallWithZeroMood = async (call) => {
+  if (!call || call.memory_id) return;
+
+  const reminderMissed = isReminderTriggeredCall(call);
+  const missedReason = reminderMissed ? 'Triggered reminder call was missed.' : 'Call was missed.';
+
+  const memory = await saveMemory(call.elder_id, call._id, {
+    summary: `${missedReason} No conversation transcript captured. Mood score set to 0.`,
+    mood_score: 0,
+    mood_label: 'very_low',
+    key_topics: ['missed_call'],
+    people_mentioned: [],
+    health_mentions: [],
+    important_details: [
+      missedReason,
+      'Call not started or transcript was empty.'
+    ],
+    follow_up_questions: ['Please check in with the elder and retry the call later.'],
+    distress_detected: false,
+    distress_reason: 'missed_call',
+    call_duration_minutes: 0,
+    call_quality: 'not_connected'
+  });
+
+  call.final_mood_score = 0;
+  call.final_distress_score = 0;
+  call.distress_detected = false;
+  call.memory_id = memory._id;
+};
+
 const finalizeCompletedCall = async (call, elder) => {
   if (!call || call.memory_id) return;
 
@@ -295,7 +327,7 @@ const syncReminderStatusFromCall = async (call) => {
   const terminalStatus = String(call.status || '').toLowerCase();
   if (!['completed', 'no_answer', 'error'].includes(terminalStatus)) return;
 
-  const reminderStatus = terminalStatus === 'error' ? 'failed' : 'completed';
+  const reminderStatus = terminalStatus === 'completed' ? 'completed' : 'failed';
 
   await CallReminder.findOneAndUpdate(
     { call_id: call._id, status: 'triggered' },
@@ -303,7 +335,12 @@ const syncReminderStatusFromCall = async (call) => {
       status: reminderStatus,
       processed_at: new Date(),
       updated_at: new Date(),
-      error_message: terminalStatus === 'error' ? 'Call ended with error status.' : ''
+      error_message:
+        terminalStatus === 'error'
+          ? 'Call ended with error status.'
+          : terminalStatus === 'no_answer'
+            ? 'Triggered reminder call was missed.'
+            : ''
     }
   );
 };
@@ -582,6 +619,7 @@ router.post('/twilio/status', async (req, res, next) => {
       call.duration_seconds = duration || call.duration_seconds || 0;
 
       const transcript = String(call.transcript || '').trim();
+      const transcriptEmpty = transcript.length === 0;
       const hadConversation = hasUserSpeech(transcript);
       const wasConnected =
         Boolean(call.started_at) ||
@@ -593,7 +631,12 @@ router.post('/twilio/status', async (req, res, next) => {
         call.status = 'no_answer';
       }
 
+      if (!call.started_at || transcriptEmpty) {
+        call.status = 'no_answer';
+      }
+
       if (call.status === 'no_answer') {
+        await finalizeMissedCallWithZeroMood(call);
         await call.save();
         await syncReminderStatusFromCall(call);
         return res.status(200).json({ acknowledged: true });
@@ -601,6 +644,10 @@ router.post('/twilio/status', async (req, res, next) => {
 
       const elder = await Elder.findById(call.elder_id);
       await finalizeCompletedCall(call, elder);
+    }
+
+    if (call.status === 'no_answer') {
+      await finalizeMissedCallWithZeroMood(call);
     }
 
     await call.save();

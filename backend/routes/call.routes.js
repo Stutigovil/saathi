@@ -56,7 +56,6 @@ router.post('/trigger/:elderId', async (req, res, next) => {
       elder_id: elder._id,
       provider_call_id: providerCallId,
       vapi_call_id: providerCallId,
-      started_at: new Date(),
       status: 'calling',
       attempt_number: 1,
       transcript: '',

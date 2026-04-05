@@ -10,8 +10,42 @@ const toPublicUser = (user) => ({
   id: String(user._id),
   name: user.name,
   email: user.email,
+  family_profile: user.family_profile || {
+    member_name: '',
+    relationship_with_elder: '',
+    phone: '',
+    whatsapp: '',
+    platform_reason: ''
+  },
+  profile_completed: Boolean(user.profile_completed),
   created_at: user.created_at
 });
+
+const sanitizeFamilyProfileInput = (payload) => {
+  const member_name = String(payload?.member_name || '').trim();
+  const relationship_with_elder = String(payload?.relationship_with_elder || '').trim();
+  const phone = String(payload?.phone || '').trim();
+  const whatsapp = String(payload?.whatsapp || '').trim();
+  const platform_reason = String(payload?.platform_reason || '').trim();
+
+  return {
+    member_name,
+    relationship_with_elder,
+    phone,
+    whatsapp,
+    platform_reason
+  };
+};
+
+const isFamilyProfileComplete = (profile) => {
+  return Boolean(
+    String(profile?.member_name || '').trim() &&
+      String(profile?.relationship_with_elder || '').trim() &&
+      String(profile?.phone || '').trim() &&
+      String(profile?.whatsapp || '').trim() &&
+      String(profile?.platform_reason || '').trim()
+  );
+};
 
 router.post('/signup', async (req, res, next) => {
   try {
@@ -36,8 +70,15 @@ router.post('/signup', async (req, res, next) => {
       return res.status(409).json({ message: 'An account with this email already exists.' });
     }
 
+    const familyProfile = sanitizeFamilyProfileInput(req.body.family_profile || {});
     const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-    const user = await FamilyUser.create({ name, email, password_hash });
+    const user = await FamilyUser.create({
+      name,
+      email,
+      password_hash,
+      family_profile: familyProfile,
+      profile_completed: isFamilyProfileComplete(familyProfile)
+    });
     const token = signAuthToken(user);
 
     return res.status(201).json({ token, user: toPublicUser(user) });
@@ -78,6 +119,32 @@ router.get('/me', requireAuth, async (req, res, next) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
+    return res.json({ user: toPublicUser(user) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch('/profile', requireAuth, async (req, res, next) => {
+  try {
+    const user = await FamilyUser.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const incomingName = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+    if (incomingName) {
+      if (incomingName.length < 2) {
+        return res.status(400).json({ message: 'Name must be at least 2 characters.' });
+      }
+      user.name = incomingName;
+    }
+
+    const familyProfile = sanitizeFamilyProfileInput(req.body.family_profile || user.family_profile || {});
+    user.family_profile = familyProfile;
+    user.profile_completed = isFamilyProfileComplete(familyProfile);
+
+    await user.save();
     return res.json({ user: toPublicUser(user) });
   } catch (error) {
     return next(error);

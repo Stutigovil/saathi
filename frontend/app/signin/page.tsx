@@ -14,7 +14,6 @@ function SignInForm() {
   const searchParams = useSearchParams();
   const nextPath = useMemo(() => searchParams.get('next') || '/dashboard', [searchParams]);
 
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -40,7 +39,11 @@ function SignInForm() {
     try {
       const result = await api.signIn({ email: cleanEmail, password });
       auth.setSession(result);
-      router.push(nextPath);
+      if (!result.user?.profile_completed) {
+        router.push('/settings?firstTime=1');
+      } else {
+        router.push(nextPath);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to sign in.');
     } finally {
@@ -117,16 +120,6 @@ function SignInForm() {
                 {error}
               </motion.div>
             )}
-
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">Name</label>
-              <input
-                className="input-glass"
-                placeholder="Your name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-300">Email</label>

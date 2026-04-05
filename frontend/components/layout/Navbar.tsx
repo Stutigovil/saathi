@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { auth, type AuthSession } from '@/lib/auth';
-import { Menu, X, Sun, Phone, LayoutDashboard, UserPlus, LogOut } from 'lucide-react';
+import { Menu, X, Sun, Phone, LayoutDashboard, UserPlus, LogOut, Settings } from 'lucide-react';
 
 export default function Navbar() {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -60,6 +60,10 @@ export default function Navbar() {
                   <LayoutDashboard className="h-4 w-4" />
                   Dashboard
                 </Link>
+                <Link href="/settings" className="btn-ghost flex items-center gap-2 text-sm">
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Link>
                 <Link href="/onboard" className="btn-primary flex items-center gap-2 !py-2 text-sm">
                   <UserPlus className="h-4 w-4" />
                   Add Elder
@@ -108,6 +112,9 @@ export default function Navbar() {
                   <p className="mb-2 text-sm text-muted">Hi, {session.name}</p>
                   <Link href="/dashboard" onClick={() => setMobileOpen(false)} className="btn-ghost flex items-center gap-2">
                     <LayoutDashboard className="h-4 w-4" /> Dashboard
+                  </Link>
+                  <Link href="/settings" onClick={() => setMobileOpen(false)} className="btn-ghost flex items-center gap-2">
+                    <Settings className="h-4 w-4" /> Settings
                   </Link>
                   <Link href="/onboard" onClick={() => setMobileOpen(false)} className="btn-primary flex items-center justify-center gap-2">
                     <UserPlus className="h-4 w-4" /> Add Elder
