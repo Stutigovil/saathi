@@ -14,12 +14,15 @@ It places warm Hindi voice calls, remembers context from past conversations, tra
 
 ## Live Deployment
 
-- Frontend (Vultr Bare Metal): https://YOUR-FRONTEND-URL-HERE
-- Backend API Status: Currently facing issues in deploying backend on vultr, locally everything is working fine
+- Frontend (Vultr Bare Metal): http://139.84.156.228/
+- Backend API Status: Frontend is deployed, but backend has deployment issues right now (local backend is working).
+
+
+## Demo Video
+
+- Google Drive Demo: https://drive.google.com/drive/folders/1NBiiyfrnMxTEvcFzZjEhCYhHztZNGPDd
 
 ## Elevator Pitch
-
-Millions of elders live alone while families live far away.
 Saathi creates daily emotional check-ins through phone calls, then turns those conversations into meaningful family visibility: mood trends, memory timelines, and safety alerts.
 
 ## Problem
