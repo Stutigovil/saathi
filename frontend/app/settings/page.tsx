@@ -1,19 +1,22 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AuthGuard from '@/components/auth/AuthGuard';
 import Navbar from '@/components/layout/Navbar';
 import { api } from '@/lib/api';
 
-export default function SettingsPage() {
+function SettingsContent() {
   const searchParams = useSearchParams();
   const firstTime = searchParams.get('firstTime') === '1';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState('');
 
   const [name, setName] = useState('');
   const [familyName, setFamilyName] = useState('');
@@ -21,6 +24,9 @@ export default function SettingsPage() {
   const [phone, setPhone] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [reason, setReason] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   useEffect(() => {
     const run = async () => {
@@ -75,6 +81,49 @@ export default function SettingsPage() {
       setError(e instanceof Error ? e.message : 'Failed to update settings.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const changePassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordMessage('');
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError('Please fill all password fields.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setPasswordError('New password must be at least 6 characters.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New password and confirm password do not match.');
+      return;
+    }
+
+    if (currentPassword === newPassword) {
+      setPasswordError('New password must be different from current password.');
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const response = await api.changePassword({
+        current_password: currentPassword,
+        new_password: newPassword
+      });
+
+      setPasswordMessage(response?.message || 'Password updated successfully.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (e) {
+      setPasswordError(e instanceof Error ? e.message : 'Failed to update password.');
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -157,8 +206,66 @@ export default function SettingsPage() {
               </form>
             )}
           </section>
+
+          <section className="soft-card p-5">
+            <h2 className="text-lg font-semibold text-white">Change Password</h2>
+            <p className="mt-1 text-sm text-gray-400">Update your account password securely.</p>
+
+            <form onSubmit={changePassword} className="mt-4 space-y-4">
+              {passwordError ? (
+                <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">{passwordError}</p>
+              ) : null}
+              {passwordMessage ? (
+                <p className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{passwordMessage}</p>
+              ) : null}
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <input
+                  type="password"
+                  className="rounded-lg border border-border bg-background px-3 py-2 md:col-span-2"
+                  placeholder="Current password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                />
+
+                <input
+                  type="password"
+                  className="rounded-lg border border-border bg-background px-3 py-2"
+                  placeholder="New password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+
+                <input
+                  type="password"
+                  className="rounded-lg border border-border bg-background px-3 py-2"
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={passwordSaving}
+                  className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                >
+                  {passwordSaving ? 'Updating...' : 'Update Password'}
+                </button>
+              </div>
+            </form>
+          </section>
         </main>
       </div>
     </AuthGuard>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsContent />
+    </Suspense>
   );
 }

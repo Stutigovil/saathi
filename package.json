@@ -9,6 +9,7 @@
     "dev:clean": "node scripts/dev-clean.js",
     "dev:with-seed": "npm run seed && npm run dev",
     "scheduler": "cd backend && npm run scheduler",
+    "deploy": "npm --prefix frontend run build && pm2 startOrRestart ecosystem.config.cjs --update-env && pm2 save && sudo nginx -t && sudo systemctl reload nginx",
     "prod:backend": "cd backend && NODE_ENV=production npm start",
     "prod:backend:ngrok": "concurrently -n backend,ngrok -c cyan,green \"cd backend && NODE_ENV=production npm start\" \"ngrok start saathi\"",
     "prod:frontend:build": "cd frontend && npm run build",

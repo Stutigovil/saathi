@@ -151,4 +151,40 @@ router.patch('/profile', requireAuth, async (req, res, next) => {
   }
 });
 
+router.patch('/password', requireAuth, async (req, res, next) => {
+  try {
+    const currentPassword = String(req.body.current_password || '');
+    const newPassword = String(req.body.new_password || '');
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'current_password and new_password are required.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ message: 'New password must be different from current password.' });
+    }
+
+    const user = await FamilyUser.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!matches) {
+      return res.status(401).json({ message: 'Current password is incorrect.' });
+    }
+
+    user.password_hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    await user.save();
+
+    return res.json({ message: 'Password updated successfully.' });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 module.exports = router;

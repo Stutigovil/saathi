@@ -28,6 +28,11 @@ const resolveApiUrl = () => {
     }
   }
 
+  // In production behind a reverse proxy, call API on the same origin.
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/$/, '');
+  }
+
   return 'http://localhost:5000';
 };
 
@@ -86,6 +91,11 @@ export const api = {
   me: () => request<{ user: PublicUser }>('/api/auth/me'),
   updateProfile: (payload: { name?: string; family_profile: FamilyProfile }) =>
     request<{ user: PublicUser }>('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  changePassword: (payload: { current_password: string; new_password: string }) =>
+    request<{ message: string }>('/api/auth/password', {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),

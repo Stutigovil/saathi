@@ -6,6 +6,7 @@ const Call = require('../models/Call');
 const Alert = require('../models/Alert');
 const ArmorIQBlock = require('../models/ArmorIQBlock');
 const { getMoodTrend } = require('../services/memory.service');
+const { getDefaultVoiceId } = require('../services/elevenlabs.service');
 const { requireAuth } = require('../middleware/auth.middleware');
 
 const router = express.Router();
@@ -41,7 +42,10 @@ router.get('/elder/:id', async (req, res, next) => {
       mood_trend: moodTrend,
       last_calls: calls,
       armoriq_blocks_count: armoriqCount,
-      alert_history: alerts
+      alert_history: alerts,
+      tts_defaults: {
+        voice_id: getDefaultVoiceId()
+      }
     });
   } catch (error) {
     return next(error);

@@ -4,6 +4,7 @@ const twilio = require('twilio');
 const Call = require('../models/Call');
 const CallReminder = require('../models/CallReminder');
 const Elder = require('../models/Elder');
+const FamilyUser = require('../models/FamilyUser');
 const { mapTwilioStatusToCallStatus } = require('../services/twilio-voice.service');
 const { summarizeCall, getConversationResponse } = require('../services/gemini.service');
 const { saveMemory, getMemoryContext } = require('../services/memory.service');
@@ -21,24 +22,57 @@ const { twiml: TwiML } = twilio;
 const ttsAudioCache = new Map();
 const TTS_CACHE_TTL_MS = 5 * 60 * 1000;
 const TTS_GENERATION_TIMEOUT_MS = Number(process.env.TTS_GENERATION_TIMEOUT_MS || 9000);
+const TTS_GATHER_TIMEOUT_MS = Number(process.env.TTS_GATHER_TIMEOUT_MS || 2500);
 const AI_REPLY_TIMEOUT_MS = Number(process.env.AI_REPLY_TIMEOUT_MS || 2500);
-const GROQ_MIN_REQUEST_GAP_MS = Number(process.env.GROQ_MIN_REQUEST_GAP_MS || 0);
+const AI_REPLY_TIMEOUT_MAX_MS = Number(process.env.AI_REPLY_TIMEOUT_MAX_MS || 7000);
+const ELEVENLABS_CLONE_STABILITY = Number(process.env.ELEVENLABS_CLONE_STABILITY || 0.42);
+const ELEVENLABS_CLONE_SIMILARITY = Number(process.env.ELEVENLABS_CLONE_SIMILARITY || 0.9);
+const ELEVENLABS_CLONE_STYLE = Number(process.env.ELEVENLABS_CLONE_STYLE || 0.55);
+const ELEVENLABS_CLONE_SPEED = Number(process.env.ELEVENLABS_CLONE_SPEED || 0.92);
 const MAX_CALL_TURNS = Number(process.env.MAX_CALL_TURNS || 6);
 const isElevenLabsEnabled = () => process.env.ELEVENLABS_ENABLED === 'true';
 const TWILIO_HINDI_VOICE = process.env.TWILIO_HINDI_VOICE || 'Polly.Aditi';
 const TWILIO_HINDI_LANGUAGE = process.env.TWILIO_HINDI_LANGUAGE || 'hi-IN';
-const TWILIO_SPEECH_MODEL = process.env.TWILIO_SPEECH_MODEL || 'experimental_conversations';
+const TWILIO_SPEECH_MODEL = String(process.env.TWILIO_SPEECH_MODEL || 'default').trim();
+const TWILIO_SPEECH_LANGUAGE = String(process.env.TWILIO_SPEECH_LANGUAGE || '').trim();
 const TWILIO_SPEECH_TIMEOUT_SECONDS = String(process.env.TWILIO_SPEECH_TIMEOUT_SECONDS || '2');
 const TWILIO_ACTION_ON_EMPTY_RESULT = process.env.TWILIO_ACTION_ON_EMPTY_RESULT !== 'false';
 const TWILIO_PROFANITY_FILTER = process.env.TWILIO_PROFANITY_FILTER !== 'false';
+const TWILIO_MIN_SPEECH_CONFIDENCE = Number(process.env.TWILIO_MIN_SPEECH_CONFIDENCE || 0.3);
 const TWILIO_SPEECH_HINTS =
   process.env.TWILIO_SPEECH_HINTS ||
   'dard,chot,pair,sujan,bukhar,chakkar,kamjori,udaas,tension,saans,dawai,doctor,parivaar,beta,beti';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DEFAULT_FALLBACK_RESPONSE =
+  'Mujhe aapki baat poori tarah clear nahi mili. Kripya ek baar dheere se phir batayen, main dhyan se sun rahi hoon.';
 
-const getPublicBaseUrl = () => {
-  const url = process.env.PUBLIC_BASE_URL || process.env.BACKEND_PUBLIC_URL;
-  return url ? url.replace(/\/$/, '') : '';
+const normalizeAbsoluteHttpUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = new URL(raw);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+};
+
+const getPublicBaseUrl = (req) => {
+  const fromEnv =
+    normalizeAbsoluteHttpUrl(process.env.PUBLIC_BASE_URL) ||
+    normalizeAbsoluteHttpUrl(process.env.BACKEND_PUBLIC_URL) ||
+    normalizeAbsoluteHttpUrl(process.env.TWILIO_WEBHOOK_BASE_URL);
+
+  if (fromEnv) return fromEnv;
+
+  const host = req?.headers?.host;
+  if (!host) return '';
+
+  const forwardedProto = String(req?.headers?.['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = forwardedProto || req?.protocol || 'http';
+  return `${protocol}://${host}`.replace(/\/$/, '');
 };
 
 const getHindiIntroText = (elderName) =>
@@ -53,10 +87,17 @@ const getGatherOptions = (elderId, turn, elder) => {
     .filter(Boolean)
     .join(',');
 
-  return {
+  const normalizedModel = TWILIO_SPEECH_MODEL.toLowerCase();
+  let speechLanguage = TWILIO_SPEECH_LANGUAGE || TWILIO_HINDI_LANGUAGE;
+
+  // Twilio Gather + Deepgram Nova-3 works best in multilingual mode for Hindi calls.
+  if (normalizedModel === 'deepgram_nova-3' && !TWILIO_SPEECH_LANGUAGE) {
+    speechLanguage = 'multi';
+  }
+
+  const options = {
     input: 'speech',
-    language: TWILIO_HINDI_LANGUAGE,
-    speechModel: TWILIO_SPEECH_MODEL,
+    language: speechLanguage,
     speechTimeout: TWILIO_SPEECH_TIMEOUT_SECONDS,
     actionOnEmptyResult: TWILIO_ACTION_ON_EMPTY_RESULT,
     profanityFilter: TWILIO_PROFANITY_FILTER,
@@ -64,6 +105,12 @@ const getGatherOptions = (elderId, turn, elder) => {
     action: buildGatherAction(elderId, turn),
     method: 'POST'
   };
+
+  if (TWILIO_SPEECH_MODEL && TWILIO_SPEECH_MODEL.toLowerCase() !== 'auto') {
+    options.speechModel = TWILIO_SPEECH_MODEL;
+  }
+
+  return options;
 };
 const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const sanitizeReplyForSpeech = (text, elderName) => {
@@ -80,11 +127,111 @@ const sanitizeReplyForSpeech = (text, elderName) => {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (elderName) {
-    output = output.replace(new RegExp(`\\b${escapeRegExp(elderName)}\\b`, 'gi'), '');
+  return output.replace(/\s+/g, ' ').trim();
+};
+
+const isAskingOwnName = (speech) => {
+  const normalized = normalizeForRepeatCheck(speech);
+  if (!normalized) return false;
+
+  return [
+    /mera\s+naam\s+pata/, 
+    /kya\s+aapko\s+mera\s+naam\s+pata/, 
+    /aapko\s+mera\s+naam\s+yaad/, 
+    /kya\s+aap\s+mera\s+naam\s+jaante/, 
+    /do\s+you\s+know\s+my\s+name/
+  ].some((pattern) => pattern.test(normalized));
+};
+
+const extractPrimaryRelation = (elder) => {
+  const firstFamily = Array.isArray(elder?.family) ? elder.family.find((f) => f?.relationship) : null;
+  if (firstFamily?.relationship) {
+    return {
+      relationship: String(firstFamily.relationship).trim(),
+      personName: String(firstFamily.name || '').trim()
+    };
   }
 
-  return output.replace(/\s+/g, ' ').trim();
+  const notes = String(elder?.known_info?.notes_from_family || '');
+  const match = notes.match(/primary\s+family\s+relation\s*:\s*([^\n]+)/i);
+  if (!match?.[1]) return null;
+  return {
+    relationship: String(match[1]).trim(),
+    personName: ''
+  };
+};
+
+const getFamilyProfileFromOwner = (owner) => {
+  const profile = owner?.family_profile || {};
+  return {
+    member_name: String(profile.member_name || '').trim(),
+    relationship_with_elder: String(profile.relationship_with_elder || '').trim(),
+    phone: String(profile.phone || '').trim(),
+    whatsapp: String(profile.whatsapp || '').trim(),
+    platform_reason: String(profile.platform_reason || '').trim()
+  };
+};
+
+const getProfileKnowledgeResponse = (speech, elder, familyProfile = null) => {
+  const normalized = normalizeForRepeatCheck(speech);
+  if (!normalized || !elder) return null;
+
+  if (isAskingOwnName(speech) && elder.name) {
+    return `Ji haan, aapka naam ${elder.name} hai. Main aapko yaad rakhti hoon.`;
+  }
+
+  if (/meri\s+umar|main\s+kitne\s+saal|my\s+age|age\s+kya/.test(normalized) && elder.age) {
+    return `Ji, aapki umar ${elder.age} saal hai.`;
+  }
+
+  if (/main\s+kahan\s+rehti|mera\s+sheher|meri\s+city|which\s+city/.test(normalized) && elder.city) {
+    return `Ji, aap ${elder.city} mein rehti hain.`;
+  }
+
+  if (/meri\s+bhasha|main\s+kaunsi\s+language|which\s+language/.test(normalized) && elder.language) {
+    return `Ji, aapki preferred language ${elder.language} hai.`;
+  }
+
+  if (/mera\s+(beta|beti|betaa|betaa|parivaar)|mere\s+ghar\s+mein\s+kaun|family\s+relation/.test(normalized)) {
+    const relation = extractPrimaryRelation(elder) || {
+      relationship: String(familyProfile?.relationship_with_elder || '').trim(),
+      personName: String(familyProfile?.member_name || '').trim()
+    };
+
+    if (relation?.relationship && relation.personName) {
+      return `Ji, aapke primary family contact ${relation.personName} hain, aur relation ${relation.relationship} hai.`;
+    }
+    if (relation?.relationship) {
+      return `Ji, onboarding ke hisaab se aapka primary family relation ${relation.relationship} hai.`;
+    }
+  }
+
+  if (/family\s+member\s+ka\s+naam|mere\s+family\s+member\s+ka\s+naam|kis\s+naam\s+se\s+save/.test(normalized)) {
+    const memberName = String(familyProfile?.member_name || '').trim();
+    if (memberName) {
+      return `Ji, aapke family member ka naam ${memberName} hai.`;
+    }
+  }
+
+  if (/family\s+phone|ghar\s+walo\s+ka\s+number|mera\s+emergency\s+number|kisko\s+call\s+karen/.test(normalized)) {
+    const phone = String(familyProfile?.phone || '').trim();
+    if (phone) {
+      return `Ji, aapka family contact number ${phone} hai.`;
+    }
+  }
+
+  if (/whatsapp\s+number|family\s+whatsapp/.test(normalized)) {
+    const whatsapp = String(familyProfile?.whatsapp || '').trim();
+    if (whatsapp) {
+      return `Ji, family WhatsApp number ${whatsapp} hai.`;
+    }
+  }
+
+  if (/call\s+time|kab\s+call\s+karte|schedule|kis\s+samay/.test(normalized) && elder.schedule_time) {
+    return `Ji, aapka daily call schedule ${elder.schedule_time} IST set hai.`;
+  }
+
+  return null;
 };
 
 const isAwkwardInjuryQuestion = (text) => {
@@ -145,7 +292,37 @@ const isRepeatedAssistantIntent = (candidate, recentUtterances) => {
   });
 };
 
-const buildFreshFollowUp = (speech, turn) => {
+const pickNonRepeatingFollowUp = (candidates, recentUtterances, offset = 0) => {
+  if (!Array.isArray(candidates) || !candidates.length) return '';
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const index = (offset + i) % candidates.length;
+    const candidate = candidates[index];
+    if (!isRepeatedAssistantIntent(candidate, recentUtterances)) {
+      return candidate;
+    }
+  }
+
+  return candidates[offset % candidates.length];
+};
+
+const isUserEndingConversation = (speech) => {
+  const normalized = normalizeForRepeatCheck(speech);
+  if (!normalized) return false;
+
+  return [
+    /kal\s+baat\s+karenge?/, 
+    /kal\s+baat\s+karte\s+hain/, 
+    /baad\s+mein\s+baat\s+karenge?/, 
+    /phir\s+baat\s+karenge?/, 
+    /network\s+kharab/, 
+    /net\s+kharab/, 
+    /abhi\s+rakhte\s+hain/, 
+    /bye|good\s*night|shubh\s*ratri/
+  ].some((pattern) => pattern.test(normalized));
+};
+
+const buildFreshFollowUp = (speech, turn, recentUtterances = []) => {
   const normalized = normalizeForRepeatCheck(speech);
 
   const painFollowUps = [
@@ -163,7 +340,10 @@ const buildFreshFollowUp = (speech, turn) => {
   const neutralFollowUps = [
     'Samajh gaya ji. Aaj din ka kaunsa hissa thoda heavy laga?',
     'Theek hai ji, main dhyan se sun rahi hoon. Aap thoda aur detail mein batayengi?',
-    'Ji bilkul, aap aaram se batayein. Main yahin hoon sunne ke liye.'
+    'Ji bilkul, aap aaram se batayein. Main yahin hoon sunne ke liye.',
+    'Aap aaram se boliye ji, main sun rahi hoon. Ismein sabse mushkil kya lag raha hai?',
+    'Theek hai ji. Aapki baat zaroori hai, zara dheere se phir batayengi?',
+    'Samajh rahi hoon ji. Aapko abhi kis baat ka sabse zyada tension ho raha hai?'
   ];
 
   const bucket =
@@ -173,16 +353,35 @@ const buildFreshFollowUp = (speech, turn) => {
         ? lowMoodFollowUps
         : neutralFollowUps;
 
-  return bucket[turn % bucket.length];
+  return pickNonRepeatingFollowUp(bucket, recentUtterances, turn % bucket.length);
 };
 
-const cacheTtsAudio = async (text, voiceId) => {
+const isCustomClonedVoice = (voiceId) => {
+  const current = String(voiceId || '').trim();
+  const defaultVoice = String(process.env.ELEVENLABS_VOICE_ID || '').trim();
+  return Boolean(current) && (!defaultVoice || current !== defaultVoice);
+};
+
+const buildElevenLabsTtsOptions = ({ voiceId } = {}) => {
+  if (!isCustomClonedVoice(voiceId)) {
+    return {};
+  }
+
+  return {
+    stability: ELEVENLABS_CLONE_STABILITY,
+    similarityBoost: ELEVENLABS_CLONE_SIMILARITY,
+    style: ELEVENLABS_CLONE_STYLE,
+    speed: ELEVENLABS_CLONE_SPEED
+  };
+};
+
+const cacheTtsAudio = async (text, voiceId, timeoutMs = TTS_GENERATION_TIMEOUT_MS, ttsOptions = {}) => {
   let tts = null;
 
   try {
     tts = await Promise.race([
-      synthesizeSpeech(text, voiceId || process.env.ELEVENLABS_VOICE_ID),
-      sleep(TTS_GENERATION_TIMEOUT_MS).then(() => null)
+      synthesizeSpeech(text, voiceId || process.env.ELEVENLABS_VOICE_ID, ttsOptions),
+      sleep(timeoutMs).then(() => null)
     ]);
   } catch (error) {
     console.warn(`TTS generation error. Falling back to Twilio say: ${error?.message || error}`);
@@ -214,9 +413,10 @@ const getCachedAudio = (token) => {
   return item;
 };
 
-const speakWithPreferredTts = async (target, text, { useElevenLabs, publicBase, voiceId }) => {
+const speakWithPreferredTts = async (target, text, { useElevenLabs, publicBase, voiceId, ttsTimeoutMs }) => {
   if (useElevenLabs) {
-    const token = await cacheTtsAudio(text, voiceId);
+    const ttsOptions = buildElevenLabsTtsOptions({ voiceId });
+    const token = await cacheTtsAudio(text, voiceId, ttsTimeoutMs, ttsOptions);
     if (token) {
       target.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(token)}`);
       return true;
@@ -350,7 +550,7 @@ router.post('/twilio/voice', async (req, res) => {
     const elderId = req.query.elderId || req.body.elderId;
     const elder = elderId ? await Elder.findById(elderId).lean() : null;
     const introText = getHindiIntroText(elder?.name);
-    const publicBase = getPublicBaseUrl();
+    const publicBase = getPublicBaseUrl(req);
     const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
     const elderVoiceId = elder?.voice_id || process.env.ELEVENLABS_VOICE_ID;
     console.info(`TTS mode: ${useElevenLabs ? 'elevenlabs' : 'twilio'} (publicBase=${publicBase ? 'set' : 'missing'})`);
@@ -359,11 +559,10 @@ router.post('/twilio/voice', async (req, res) => {
     const gather = vr.gather(getGatherOptions(elderId, 1, elder));
 
     await speakWithPreferredTts(gather, introText, { useElevenLabs, publicBase, voiceId: elderVoiceId });
-    await speakWithPreferredTts(vr, 'Aapki awaaz theek se nahi aayi. Main dubara sunne ki koshish karti hoon.', {
-      useElevenLabs,
-      publicBase,
-      voiceId: elderVoiceId
-    });
+    vr.say(
+      { voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE },
+      'Aapki awaaz theek se nahi aayi. Main dubara sunne ki koshish karti hoon.'
+    );
     vr.redirect({ method: 'POST' }, buildGatherAction(elderId, 1));
 
     res.type('text/xml').send(vr.toString());
@@ -417,13 +616,30 @@ router.get('/twilio/tts', async (req, res) => {
 router.post('/twilio/gather', async (req, res) => {
   try {
     const callSid = req.body.CallSid;
-    const speech = String(req.body.SpeechResult || '').trim();
+    let speech = String(req.body.SpeechResult || '').trim();
+    const confidence = Number(req.body.Confidence);
+    const speechWordCount = speech ? speech.split(/\s+/).filter(Boolean).length : 0;
+    const shortSpeech = speech.length < 12 || speechWordCount <= 2;
+    const hasLowConfidenceSpeech =
+      speech && Number.isFinite(confidence) && confidence >= 0 && confidence < TWILIO_MIN_SPEECH_CONFIDENCE && shortSpeech;
+
+    if (hasLowConfidenceSpeech) {
+      console.warn(
+        `Dropping low-confidence speech in gather (confidence=${confidence.toFixed(2)} threshold=${TWILIO_MIN_SPEECH_CONFIDENCE}).`
+      );
+      speech = '';
+    }
+
     const call = await Call.findOne({ provider_call_id: callSid });
     const elderId = req.query.elderId || req.body.elderId || call?.elder_id;
     const turn = Math.max(1, Number(req.query.turn || 1));
     const nextTurn = turn + 1;
     const elder = elderId ? await Elder.findById(elderId).lean() : null;
-    const publicBase = getPublicBaseUrl();
+    const owner = elder?.created_by
+      ? await FamilyUser.findById(elder.created_by).select('family_profile').lean()
+      : null;
+    const familyProfile = getFamilyProfileFromOwner(owner);
+    const publicBase = getPublicBaseUrl(req);
     const useElevenLabs = Boolean(isElevenLabsEnabled() && process.env.ELEVENLABS_API_KEY && publicBase);
     const elderVoiceId = elder?.voice_id || process.env.ELEVENLABS_VOICE_ID;
 
@@ -438,7 +654,8 @@ router.post('/twilio/gather', async (req, res) => {
         await speakWithPreferredTts(regather, 'Aapki awaaz theek se sunayi nahi di. Kripya phir se batayen, main sun rahi hoon.', {
           useElevenLabs,
           publicBase,
-          voiceId: elderVoiceId
+          voiceId: elderVoiceId,
+          ttsTimeoutMs: TTS_GATHER_TIMEOUT_MS
         });
         vr.redirect({ method: 'POST' }, buildGatherAction(elderId, nextTurn));
       }
@@ -450,48 +667,58 @@ router.post('/twilio/gather', async (req, res) => {
       call.exchange_count = Number(call.exchange_count || 0) + 1;
     }
 
-    let responseText = 'Aapki baat sunkar achha laga. Aap apna khayal rakhiye.';
+    const recentAssistantUtterances = getRecentAssistantUtterances(call?.transcript, 4);
+    let responseText = DEFAULT_FALLBACK_RESPONSE;
+    const profileKnowledgeResponse = getProfileKnowledgeResponse(speech, elder, familyProfile);
 
-    try {
-      const effectiveAiTimeoutMs = Math.max(AI_REPLY_TIMEOUT_MS, GROQ_MIN_REQUEST_GAP_MS + 2000, 3000);
-      const aiResult = await Promise.race([
-        (async () => {
-          const memoryContext = elderId ? await getMemoryContext(elderId) : 'No prior memory found.';
-          const baseSystemPrompt = ensureBasePrompt({ call, elder, memoryContext });
-          const effectiveSystemPrompt = getEffectiveSystemPrompt({
-            basePrompt: baseSystemPrompt,
-            dynamicPromptState: call?.dynamic_prompt_state
-          });
+    if (profileKnowledgeResponse) {
+      responseText = profileKnowledgeResponse;
+    } else {
+      try {
+        const effectiveAiTimeoutMs = Math.max(1200, Math.min(AI_REPLY_TIMEOUT_MS, AI_REPLY_TIMEOUT_MAX_MS));
+        const aiResult = await Promise.race([
+          (async () => {
+            const memoryContext = elderId ? await getMemoryContext(elderId) : 'No prior memory found.';
+            const baseSystemPrompt = ensureBasePrompt({ call, elder, memoryContext });
+            const effectiveSystemPrompt = getEffectiveSystemPrompt({
+              basePrompt: baseSystemPrompt,
+              dynamicPromptState: call?.dynamic_prompt_state
+            });
 
-          const transcriptForAI = call?.transcript || speech;
+            const transcriptForAI = call?.transcript || speech;
 
-          return getConversationResponse({
-            transcript: transcriptForAI,
-            memoryContext,
-            elderName: elder?.name || 'Elder',
-            elderProfile: elder,
-            baseSystemPrompt: effectiveSystemPrompt,
-            dynamicPromptState: call?.dynamic_prompt_state || ''
-          });
-        })(),
-        sleep(effectiveAiTimeoutMs).then(() => null)
-      ]);
+            return getConversationResponse({
+              transcript: transcriptForAI,
+              memoryContext,
+              elderName: elder?.name || 'Elder',
+              elderProfile: {
+                ...(elder || {}),
+                family_context: familyProfile
+              },
+              baseSystemPrompt: effectiveSystemPrompt,
+              dynamicPromptState: call?.dynamic_prompt_state || ''
+            });
+          })(),
+          sleep(effectiveAiTimeoutMs).then(() => null)
+        ]);
 
-      if (!aiResult) {
-        console.warn(`AI reply timed out in gather flow after ${effectiveAiTimeoutMs}ms. Using fallback response.`);
+        if (!aiResult) {
+          console.warn(`AI reply timed out in gather flow after ${effectiveAiTimeoutMs}ms. Using fallback response.`);
+          responseText = buildFreshFollowUp(speech, turn, recentAssistantUtterances);
+        }
+
+        responseText = String(aiResult?.response_text || responseText).trim();
+
+        if (call && aiResult?.dynamic_prompt_state) {
+          call.dynamic_prompt_state = sanitizeDynamicPromptState(aiResult.dynamic_prompt_state);
+        }
+
+        if (aiResult?.end_call === true) {
+          responseText = `${responseText} ${getHindiClosingText()}`;
+        }
+      } catch {
+        responseText = buildFreshFollowUp(speech, turn, recentAssistantUtterances);
       }
-
-      responseText = String(aiResult?.response_text || responseText).trim();
-
-      if (call && aiResult?.dynamic_prompt_state) {
-        call.dynamic_prompt_state = sanitizeDynamicPromptState(aiResult.dynamic_prompt_state);
-      }
-
-      if (aiResult?.end_call === true) {
-        responseText = `${responseText} ${getHindiClosingText()}`;
-      }
-    } catch {
-      responseText = 'Aapki baat sunkar achha laga. Aap apna khayal rakhiye.';
     }
 
     const normalizedSpeech = speech.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -534,46 +761,34 @@ router.post('/twilio/gather', async (req, res) => {
       console.warn(`ArmorIQ check failed: ${armoriqError?.message || armoriqError}`);
     }
 
-    const recentAssistantUtterances = getRecentAssistantUtterances(call?.transcript, 3);
     if (isRepeatedAssistantIntent(finalResponseText, recentAssistantUtterances)) {
-      finalResponseText = buildFreshFollowUp(speech, turn);
+      finalResponseText = buildFreshFollowUp(speech, turn + 1, recentAssistantUtterances);
       console.warn('Detected repeated assistant question intent; switched to fresh contextual follow-up.');
     }
 
-    const shouldEndCall = turn >= MAX_CALL_TURNS;
+    const userWantsToEndCall = isUserEndingConversation(speech);
+    if (userWantsToEndCall) {
+      finalResponseText = 'Theek hai ji, hum kal baat karenge. Aap aaram kijiye, apna khayal rakhiye.';
+    }
+
+    const shouldEndCall = turn >= MAX_CALL_TURNS || userWantsToEndCall;
 
     if (shouldEndCall) {
-      if (useElevenLabs) {
-        const [responseToken, closingToken] = await Promise.all([
-          cacheTtsAudio(finalResponseText, elderVoiceId),
-          cacheTtsAudio(getHindiClosingText(), elderVoiceId)
-        ]);
-
-        if (responseToken) {
-          vr.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(responseToken)}`);
-        } else {
-          console.warn('ElevenLabs response TTS unavailable, falling back to Twilio say.');
-          vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, finalResponseText);
-        }
-
-        if (closingToken) {
-          vr.play(`${publicBase}/webhook/twilio/tts?token=${encodeURIComponent(closingToken)}`);
-        } else {
-          console.warn('ElevenLabs closing TTS unavailable, falling back to Twilio say.');
-          vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, getHindiClosingText());
-        }
-      } else {
-        vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, finalResponseText);
-        vr.say({ voice: TWILIO_HINDI_VOICE, language: TWILIO_HINDI_LANGUAGE }, getHindiClosingText());
-      }
+      const endingText = `${finalResponseText} ${getHindiClosingText()}`.trim();
+      await speakWithPreferredTts(vr, endingText, {
+        useElevenLabs,
+        publicBase,
+        voiceId: elderVoiceId,
+        ttsTimeoutMs: TTS_GATHER_TIMEOUT_MS
+      });
       vr.hangup();
     } else {
       const regather = vr.gather(getGatherOptions(elderId, nextTurn, elder));
-      await speakWithPreferredTts(regather, finalResponseText, { useElevenLabs, publicBase, voiceId: elderVoiceId });
-      await speakWithPreferredTts(vr, 'Aap batate rahiye, main dhyan se sun rahi hoon.', {
+      await speakWithPreferredTts(regather, finalResponseText, {
         useElevenLabs,
         publicBase,
-        voiceId: elderVoiceId
+        voiceId: elderVoiceId,
+        ttsTimeoutMs: TTS_GATHER_TIMEOUT_MS
       });
       vr.redirect({ method: 'POST' }, buildGatherAction(elderId, nextTurn));
     }
@@ -596,8 +811,16 @@ router.post('/twilio/status', async (req, res, next) => {
   try {
     const callSid = req.body.CallSid;
     const twilioStatus = req.body.CallStatus;
+    const twilioErrorCode = String(req.body.ErrorCode || '').trim();
+    const twilioErrorMessage = String(req.body.ErrorMessage || '').trim();
     const duration = Number(req.body.CallDuration || 0);
     const call = await Call.findOne({ provider_call_id: callSid });
+
+    if (twilioErrorCode || twilioErrorMessage) {
+      console.warn(
+        `Twilio status error sid=${callSid || 'unknown'} status=${twilioStatus || 'unknown'} code=${twilioErrorCode || 'n/a'} message=${twilioErrorMessage || 'n/a'}`
+      );
+    }
 
     if (!call) {
       return res.status(200).json({ acknowledged: true, message: 'Call not found' });

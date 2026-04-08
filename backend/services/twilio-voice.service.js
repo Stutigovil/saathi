@@ -1,5 +1,18 @@
 const twilio = require('twilio');
 
+const normalizeAbsoluteHttpUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = new URL(raw);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+};
+
 const getTwilioClient = () => {
   if (!process.env.TWILIO_SID || !process.env.TWILIO_TOKEN) {
     throw new Error('TWILIO_SID and TWILIO_TOKEN are required for voice calls');
@@ -8,11 +21,17 @@ const getTwilioClient = () => {
 };
 
 const getBaseWebhookUrl = () => {
-  const baseUrl = process.env.PUBLIC_BASE_URL || process.env.BACKEND_PUBLIC_URL;
+  const baseUrl =
+    normalizeAbsoluteHttpUrl(process.env.PUBLIC_BASE_URL) ||
+    normalizeAbsoluteHttpUrl(process.env.BACKEND_PUBLIC_URL) ||
+    normalizeAbsoluteHttpUrl(process.env.TWILIO_WEBHOOK_BASE_URL);
+
   if (!baseUrl) {
-    throw new Error('PUBLIC_BASE_URL is required for Twilio webhook callbacks');
+    throw new Error(
+      'Set PUBLIC_BASE_URL (or BACKEND_PUBLIC_URL / TWILIO_WEBHOOK_BASE_URL) to your public backend URL for Twilio callbacks.'
+    );
   }
-  return baseUrl.replace(/\/$/, '');
+  return baseUrl;
 };
 
 const placeCall = async (elder) => {

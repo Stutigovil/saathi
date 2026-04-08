@@ -3,8 +3,8 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
-dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
+dotenv.config({ path: path.resolve(__dirname, '.env'), override: true });
 
 const { connectDB } = require('./config/db');
 
@@ -16,6 +16,7 @@ const authRoutes = require('./routes/auth.routes');
 
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
+const HOST = String(process.env.BIND_HOST || '0.0.0.0').trim();
 const MONGO_CONNECT_MAX_RETRIES = Number(process.env.MONGO_CONNECT_MAX_RETRIES || 5);
 const MONGO_CONNECT_RETRY_DELAY_MS = Number(process.env.MONGO_CONNECT_RETRY_DELAY_MS || 3000);
 
@@ -84,8 +85,8 @@ const startServer = async () => {
     throw lastError || new Error('MongoDB connection failed after retries');
   }
 
-  app.listen(PORT, () => {
-    console.log(`Sathi backend running on port ${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Sathi backend running on ${HOST}:${PORT}`);
   });
 };
 

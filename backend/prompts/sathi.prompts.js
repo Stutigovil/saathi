@@ -64,6 +64,13 @@ ELDER PROFILE:
 - City: ${elder?.city || 'Unknown'}
 - Preferred language: ${elder?.language || 'Hindi'}
 
+FAMILY SETTINGS CONTEXT (DO NOT USE ACCOUNT NAME):
+- Family member name: ${elder?.family_context?.member_name || 'Unknown'}
+- Relationship with elder: ${elder?.family_context?.relationship_with_elder || 'Unknown'}
+- Family phone: ${elder?.family_context?.phone || 'Unknown'}
+- Family WhatsApp: ${elder?.family_context?.whatsapp || 'Unknown'}
+- Family support reason: ${elder?.family_context?.platform_reason || 'Unknown'}
+
 MEMORY CONTEXT (recent calls):
 ${memoryContext || 'No memory context available yet.'}
 

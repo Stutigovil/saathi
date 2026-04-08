@@ -47,6 +47,10 @@ export default function ElderDetailPage() {
     family_whatsapp: ''
   });
 
+    const activeVoiceLabel = data?.elder?.voice_name
+      ? `${data.elder.voice_name} (${data.elder.voice_id})`
+      : `Default env voice (${data?.tts_defaults?.voice_id || 'not set'})`;
+
   useEffect(() => {
     if (!elderId) return;
     api.getElderDashboard(elderId).then((response) => {
@@ -151,7 +155,7 @@ export default function ElderDetailPage() {
     try {
       const response = await api.resetElderVoice(elderId);
       setData((prev: any) => ({ ...prev, elder: response.elder }));
-      setSaveMessage('Voice reset to default env voice (Monika).');
+      setSaveMessage(response?.message || `Voice reset to default env voice (${data?.tts_defaults?.voice_id || 'not set'}).`);
       setCloneAudio(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to reset voice.');
@@ -298,7 +302,7 @@ export default function ElderDetailPage() {
         </div>
 
         <p className="text-sm text-gray-400">
-          Current voice: {data?.elder?.voice_name ? `${data.elder.voice_name} (${data.elder.voice_id})` : 'Default env voice (Monika)'}
+          Current voice: {activeVoiceLabel}
         </p>
 
         <input
