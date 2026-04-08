@@ -43,9 +43,6 @@ Saathi works on a regular phone call flow (no app needed for elders) and provide
 - Optional custom elder voice cloning
 
 ## High-Level Design (HLD)
-
-Paste your architecture image here.
-
 ![HLD Diagram Placeholder](hld%20image/hld.jpeg)
 
 ## Key Features
