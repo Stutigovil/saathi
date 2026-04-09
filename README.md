@@ -14,16 +14,11 @@ It places warm Hindi voice calls, remembers context from past conversations, tra
 
 ## Live Deployment
 
-- Frontend (Vultr Bare Metal): http://139.84.156.228/
-- Backend API Status: Frontend is deployed, but backend has deployment issues right now (local backend is working).
-
+- Vultr Bare Metal: http://139.84.156.228/
 
 ## Demo Video
 
 - Google Drive Demo: https://drive.google.com/drive/folders/1NBiiyfrnMxTEvcFzZjEhCYhHztZNGPDd
-
-## Elevator Pitch
-Saathi creates daily emotional check-ins through phone calls, then turns those conversations into meaningful family visibility: mood trends, memory timelines, and safety alerts.
 
 ## Problem
 
@@ -259,7 +254,5 @@ npm run scheduler
 - Configure CORS (`FRONTEND_URL`) correctly.
 - Keep secrets out of source control.
 
-## Team
-- Name - Team Silly Coders
-
-
+## Team Name : Team Silly Coders
+### Built at HackByte 4.0
